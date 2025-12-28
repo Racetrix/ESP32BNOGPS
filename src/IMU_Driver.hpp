@@ -48,22 +48,27 @@ public:
         isConnected = true;
     }
 
+    // 增加一个状态标记，放在 class private 里，或者 update 里的 static
+    // 为了简单，我们直接修改 update 函数逻辑
+
     void update()
     {
-        while (serial->available())
-            serial->read(); // 清空缓存
-        sendCommand(READ_CMD, REG_LIA_DATA, 6, NULL);
-
-        unsigned long start = millis();
-        while (serial->available() < 8)
+        // 1. 如果缓冲区有足够的数据，直接读取 (非阻塞)
+        if (serial->available() >= 8) // 只有数据够了才读
         {
-            if (millis() - start > 5)
+            // 检查帧头
+            if (serial->peek() != 0xBB) // 如果第一个字节不是 BB，说明数据错位了
+            {
+                serial->read(); // 丢弃一个字节，尝试重新对齐
                 return;
-        }
+            }
 
-        if (serial->read() == 0xBB)
-        {
-            if (serial->read() == 6)
+            // 再次确认协议头 (防止偶然的0xBB)
+            // 这里我们先读两个字节看看
+            uint8_t header[2];
+            serial->readBytes(header, 2);
+
+            if (header[0] == 0xBB && header[1] == 6)
             {
                 uint8_t buf[6];
                 serial->readBytes(buf, 6);
@@ -72,18 +77,32 @@ public:
                 int16_t y_raw_int = (int16_t)((buf[3] << 8) | buf[2]);
                 int16_t z_raw_int = (int16_t)((buf[5] << 8) | buf[4]);
 
-                // 1. 计算原始物理值 (Raw) - 直接保存，不滤波！
                 ax_raw = (x_raw_int / 100.0) / 9.81;
                 ay_raw = (y_raw_int / 100.0) / 9.81;
                 az_raw = (z_raw_int / 100.0) / 9.81;
 
-                // 2. 计算平滑值 (Smoothed) - 仅供 UI 使用
                 ax = (ax_raw * ALPHA) + (ax * (1.0 - ALPHA));
                 ay = (ay_raw * ALPHA) + (ay * (1.0 - ALPHA));
                 az = (az_raw * ALPHA) + (az * (1.0 - ALPHA));
 
                 isConnected = true;
             }
+        }
+
+        // 2. 发送请求 (不需要每次循环都发，控制频率)
+        static uint32_t last_req = 0;
+        if (millis() - last_req > 20) // 每 20ms 发一次请求
+        {
+            // 在发送前，不要清空 buffer！因为可能上一帧的数据刚到
+            // 只在 buffer 溢出或者出错时清空
+            if (serial->available() > 64)
+            {
+                while (serial->available())
+                    serial->read();
+            }
+
+            sendCommand(READ_CMD, REG_LIA_DATA, 6, NULL);
+            last_req = millis();
         }
     }
 

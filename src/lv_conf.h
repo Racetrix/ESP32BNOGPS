@@ -22,7 +22,7 @@
 
 // 刷新率限制 (避免过快刷新浪费资源)
 // #define LV_DISP_DEF_REFR_PERIOD 16 // ~60fps
-#define LV_DISP_DEF_REFR_PERIOD 50
+#define LV_DISP_DEF_REFR_PERIOD 28
 
 // 启用日志 (方便调试)
 #define LV_USE_LOG 1

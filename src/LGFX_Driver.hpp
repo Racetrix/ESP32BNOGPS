@@ -18,7 +18,8 @@ public:
             auto cfg = _bus_instance.config();
             cfg.spi_host = SPI2_HOST;
             cfg.spi_mode = 0;
-            cfg.freq_write = 40000000;
+            // cfg.freq_write = 40000000;
+            cfg.freq_write = 60000000;
             cfg.freq_read = 16000000;
             cfg.spi_3wire = true;
             cfg.use_lock = true;
