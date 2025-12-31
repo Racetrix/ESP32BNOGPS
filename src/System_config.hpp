@@ -21,7 +21,7 @@ public:
     uint8_t volume = 10;
     bool boot_into_usb = false;
 
-    // --- [修复] IMU 轴向配置 (把这些丢失的变量加回来) ---
+    // --- [修复] IMU 轴向配置  ---
     bool imu_swap_axis = false; // 交换 XY 轴
     bool imu_invert_x = false;  // 反转 X 轴方向
     bool imu_invert_y = false;  // 反转 Y 轴方向

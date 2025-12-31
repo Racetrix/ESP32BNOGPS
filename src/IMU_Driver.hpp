@@ -1,7 +1,6 @@
 #pragma once
 #include <Arduino.h>
-// 必须引用配置，才能知道要不要反转
-#include "System_Config.hpp"
+#include "System_Config.hpp" // 必须包含配置
 
 class IMU_Driver
 {
@@ -89,43 +88,62 @@ public:
                 uint8_t buf[DATA_LEN];
                 serial->readBytes(buf, DATA_LEN);
 
-                // 1. 解析原始欧拉角
+                // 1. 读取原始数据 (暂存临时变量)
                 int16_t h_int = (int16_t)((buf[1] << 8) | buf[0]);
                 int16_t r_int = (int16_t)((buf[3] << 8) | buf[2]);
                 int16_t p_int = (int16_t)((buf[5] << 8) | buf[4]);
 
-                raw_head = h_int / 16.0;
-                raw_roll = r_int / 16.0;
-                raw_pit = p_int / 16.0;
+                float temp_head = h_int / 16.0;
+                float temp_roll = r_int / 16.0;
+                float temp_pit = p_int / 16.0;
 
-                // 2. 解析原始加速度
                 int16_t x_int = (int16_t)((buf[15] << 8) | buf[14]);
                 int16_t y_int = (int16_t)((buf[17] << 8) | buf[16]);
 
-                float acc_x = (x_int / 100.0) / 9.81;
-                float acc_y = (y_int / 100.0) / 9.81;
+                float temp_ax = (x_int / 100.0) / 9.81;
+                float temp_ay = (y_int / 100.0) / 9.81;
 
-                // --- [新增] 处理轴向交换 (Swap) ---
-                // 先交换，再赋值给 raw
+                // 2. --- [核心修复] 处理轴向交换 (Swap) ---
+                // 注意：必须同时交换 G 值 和 姿态角
                 if (sys_cfg.imu_swap_axis)
                 {
-                    raw_lat = acc_y; // 交换后 Y 变成横向
-                    raw_lon = acc_x; // 交换后 X 变成纵向
+                    // G值交换
+                    raw_lat = temp_ay;
+                    raw_lon = temp_ax;
+
+                    // 姿态角交换 (Roll <-> Pitch)
+                    // 注意：物理旋转90度后，Roll变成Pitch，Pitch变成-Roll (取决于旋转方向)
+                    // 这里做简单交换，如果方向反了，用户可以用 Invert 修正
+                    raw_roll = temp_pit;
+                    raw_pit = temp_roll;
                 }
                 else
                 {
-                    raw_lat = acc_x;
-                    raw_lon = acc_y;
+                    raw_lat = temp_ax;
+                    raw_lon = temp_ay;
+                    raw_roll = temp_roll;
+                    raw_pit = temp_pit;
                 }
 
-                // --- [新增] 处理反转 (Invert) ---
-                // 注意：这里是对 raw 数据反转，之后再减 offset
-                if (sys_cfg.imu_invert_x)
-                    raw_lat = -raw_lat;
-                if (sys_cfg.imu_invert_y)
-                    raw_lon = -raw_lon;
+                // 航向角通常不受 Swap 影响 (它是绕 Z 轴)，除非板子竖起来装
+                raw_head = temp_head;
 
-                // 3. 应用偏移量
+                // 3. --- 处理反转 (Invert) ---
+                // 如果 G 值反了，对应的角度通常也需要反
+                if (sys_cfg.imu_invert_x)
+                {
+                    raw_lat = -raw_lat;
+                    raw_roll = -raw_roll; // 横向 G 反了，横滚角自然也反了
+                }
+                if (sys_cfg.imu_invert_y)
+                {
+                    raw_lon = -raw_lon;
+                    raw_pit = -raw_pit;
+                }
+
+                // 4. --- 应用校准偏移量 ---
+                // 警告：一旦修改了 Swap/Invert，旧的偏移量就会失效
+                // 必须提醒用户重新 Calibrate！
                 roll = raw_roll - _off_roll;
                 pitch = raw_pit - _off_pit;
 
@@ -138,7 +156,7 @@ public:
                 float calibrated_lat = raw_lat - _off_lat;
                 float calibrated_lon = raw_lon - _off_lon;
 
-                // 4. 滤波
+                // 5. 滤波输出
                 lat_g = (lat_g * (1.0 - ALPHA)) + (calibrated_lat * ALPHA);
                 lon_g = (lon_g * (1.0 - ALPHA)) + (calibrated_lon * ALPHA);
 

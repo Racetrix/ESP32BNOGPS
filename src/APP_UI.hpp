@@ -518,19 +518,19 @@ void update_ui_loop()
 
         if (ui_ObjGball)
         {
-            float gx = imu.ax;
-            float gy = imu.ay;
+            float gx = imu.lat_g; // 横向 G (对应原来的 ax)
+            float gy = imu.lon_g; // 纵向 G (对应原来的 ay)
             // 应用配置交换
-            if (sys_cfg.imu_swap_axis)
-            {
-                float t = gx;
-                gx = gy;
-                gy = t;
-            }
-            if (sys_cfg.imu_invert_x)
-                gx = -gx;
-            if (sys_cfg.imu_invert_y)
-                gy = -gy;
+            // if (sys_cfg.imu_swap_axis)
+            // {
+            //     float t = gx;
+            //     gx = gy;
+            //     gy = t;
+            // }
+            // if (sys_cfg.imu_invert_x)
+            //     gx = -gx;
+            // if (sys_cfg.imu_invert_y)
+            //     gy = -gy;
 
             if (gx > 1.5)
                 gx = 1.5;
