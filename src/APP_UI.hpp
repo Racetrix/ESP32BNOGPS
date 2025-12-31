@@ -384,32 +384,40 @@ void build_dashboard()
 
     // 状态栏
     lv_obj_t *status_bar = lv_obj_create(panel_data);
-    lv_obj_set_size(status_bar, 136, 26);
-    lv_obj_align(status_bar, LV_ALIGN_BOTTOM_MID, 0, -2);
+    lv_obj_set_size(status_bar, 122, 26);
+    lv_obj_align(status_bar, LV_ALIGN_BOTTOM_MID, 0, -10);
     lv_obj_add_style(status_bar, &style_box_outline, LV_PART_MAIN);
-    lv_obj_clear_flag(status_bar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(status_bar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_scrollbar_mode(status_bar, LV_SCROLLBAR_MODE_OFF);
 
+    // SD (X=14)
     ui_LabelSD = lv_label_create(status_bar);
     lv_label_set_text(ui_LabelSD, "SD");
     lv_obj_set_style_text_font(ui_LabelSD, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(ui_LabelSD, lv_color_hex(0x555555), LV_PART_MAIN);
-    lv_obj_align(ui_LabelSD, LV_ALIGN_LEFT_MID, 14, 0);
+    lv_obj_align(ui_LabelSD, LV_ALIGN_LEFT_MID, -5, 0);
 
-    create_divider(status_bar, 45);
+    // 分割线 1 (位置 45)
+    create_divider(status_bar, 22);
 
+    // 2. BAT (正中间)
     ui_LabelBat = lv_label_create(status_bar);
     lv_label_set_text(ui_LabelBat, "BAT");
     lv_obj_set_style_text_font(ui_LabelBat, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(ui_LabelBat, lv_color_hex(0x555555), LV_PART_MAIN);
-    lv_obj_align(ui_LabelBat, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_align(ui_LabelBat, LV_ALIGN_CENTER, -3, 0);
 
-    create_divider(status_bar, 91);
+    // 分割线 2 (位置 91)
+    create_divider(status_bar, 65);
 
+    // 3. IMU (右侧区域)
+    // 避免短线跑到字上面，往右挪一点
     ui_LabelIMU = lv_label_create(status_bar);
     lv_label_set_text(ui_LabelIMU, "IMU");
     lv_obj_set_style_text_font(ui_LabelIMU, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(ui_LabelIMU, lv_color_hex(0x555555), LV_PART_MAIN);
-    lv_obj_align(ui_LabelIMU, LV_ALIGN_RIGHT_MID, -12, 0);
+    // 稍微靠右对齐，Offset -12px
+    lv_obj_align(ui_LabelIMU, LV_ALIGN_RIGHT_MID, 5, 0);
 }
 
 void init_ui()
