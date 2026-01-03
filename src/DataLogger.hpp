@@ -6,6 +6,7 @@
 #include "IMU_Driver.hpp"
 #include <time.h>
 #include <sys/time.h>
+#include "Audio_Driver.hpp"
 
 extern GPS_Driver gps;
 extern IMU_Driver imu;

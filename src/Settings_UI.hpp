@@ -111,23 +111,64 @@ void sw_imu_swap_event_cb(lv_event_t *e)
 {
     sys_cfg.imu_swap_axis = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
     sys_cfg.save();
+    imu.applyConfig();
 }
 void sw_imu_inv_x_event_cb(lv_event_t *e)
 {
     sys_cfg.imu_invert_x = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
     sys_cfg.save();
+    imu.applyConfig();
 }
 void sw_imu_inv_y_event_cb(lv_event_t *e)
 {
     sys_cfg.imu_invert_y = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
     sys_cfg.save();
+    imu.applyConfig();
 }
 
 void btn_settings_back_event_cb(lv_event_t *e)
 {
     lv_scr_load_anim(ui_ScreenMain, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
 }
+// [新增] 安装方向切换回调 (Flat / Vertical)
+// [修正] 安装方向切换回调 (Flat / Vertical)
+void btn_mount_event_cb(lv_event_t *e)
+{
+    lv_obj_t *btn = lv_event_get_target(e);
+    lv_obj_t *label = lv_obj_get_child(btn, 0);
 
+    // 切换状态
+    if (sys_cfg.mount_orientation == 0)
+    {
+        // 切换到 竖立 (Vertical)
+        sys_cfg.mount_orientation = 1;
+
+        // 更新 UI
+        lv_label_set_text(label, "VERT");
+        lv_obj_set_style_text_color(label, lv_color_hex(0x00FF00), LV_PART_MAIN); // 绿色
+    }
+    else
+    {
+        // 切换到 平躺 (Flat)
+        sys_cfg.mount_orientation = 0;
+
+        // 更新 UI
+        lv_label_set_text(label, "FLAT");
+        lv_obj_set_style_text_color(label, lv_color_hex(0x00AEEF), LV_PART_MAIN); // 蓝色
+    }
+
+    // 1. 保存配置
+    sys_cfg.save();
+
+    // 2. [关键] 应用配置 (让 IMU 驱动切换函数指针)
+    imu.applyConfig();
+
+    // 3. 重置当前 G 值，防止切换瞬间数据乱跳
+    imu.lon_g = 0;
+    imu.lat_g = 0;
+
+    Serial.printf("Mount Orientation: %s\n", sys_cfg.mount_orientation ? "VERTICAL" : "FLAT");
+}
 void btn_usb_mode_event_cb(lv_event_t *e)
 {
     sys_cfg.boot_into_usb = true;
@@ -283,6 +324,40 @@ void build_settings_page()
     lv_obj_t *lbl_btn_cali = lv_label_create(btn_cali);
     lv_label_set_text(lbl_btn_cali, "LEVEL");
     lv_obj_center(lbl_btn_cali);
+
+    // [新增] 安装方向设置 (Mount Orientation)
+    lv_obj_t *cont_mount = lv_obj_create(list_cont);
+    lv_obj_set_size(cont_mount, 300, 50);
+    lv_obj_set_style_bg_color(cont_mount, lv_color_hex(0x222222), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(cont_mount, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(cont_mount, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(cont_mount, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *lbl_mount = lv_label_create(cont_mount);
+    lv_label_set_text(lbl_mount, "Mount Orientation");
+    lv_obj_set_style_text_color(lbl_mount, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl_mount, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_align(lbl_mount, LV_ALIGN_LEFT_MID, 5, 0);
+
+    lv_obj_t *btn_mount = lv_btn_create(cont_mount);
+    lv_obj_set_size(btn_mount, 80, 30);
+    lv_obj_align(btn_mount, LV_ALIGN_RIGHT_MID, -5, 0);
+    lv_obj_set_style_bg_color(btn_mount, lv_color_hex(0x333333), LV_PART_MAIN); // 以此深色背景衬托文字颜色
+    lv_obj_add_event_cb(btn_mount, btn_mount_event_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *lbl_btn_mount = lv_label_create(btn_mount);
+    // 根据当前配置初始化文字和颜色
+    if (sys_cfg.mount_orientation == 1)
+    {
+        lv_label_set_text(lbl_btn_mount, "VERT");
+        lv_obj_set_style_text_color(lbl_btn_mount, lv_color_hex(0x00FF00), LV_PART_MAIN);
+    }
+    else
+    {
+        lv_label_set_text(lbl_btn_mount, "FLAT");
+        lv_obj_set_style_text_color(lbl_btn_mount, lv_color_hex(0x00AEEF), LV_PART_MAIN);
+    }
+    lv_obj_center(lbl_btn_mount);
 
     // USB 模式按钮
     lv_obj_t *cont_usb = lv_obj_create(list_cont);

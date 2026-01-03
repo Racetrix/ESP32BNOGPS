@@ -17,7 +17,7 @@ private:
 public:
     // --- 基础设置 ---
     bool bluetooth_on = false;
-    bool gps_10hz_mode = false;
+    bool gps_10hz_mode = true;
     uint8_t volume = 10;
     bool boot_into_usb = false;
 
@@ -25,6 +25,8 @@ public:
     bool imu_swap_axis = false; // 交换 XY 轴
     bool imu_invert_x = false;  // 反转 X 轴方向
     bool imu_invert_y = false;  // 反转 Y 轴方向
+    int mount_orientation = 0;
+
 
     // --- 校准偏移量 ---
     float offset_lon = 0.0f; // 纵向 G
@@ -50,6 +52,7 @@ public:
         imu_swap_axis = prefs.getBool("swap", false);
         imu_invert_x = prefs.getBool("invX", false);
         imu_invert_y = prefs.getBool("invY", false);
+        mount_orientation = prefs.getUChar("imu_mount", 0);
 
         // 读取偏移量
         offset_lon = prefs.getFloat("off_lon", 0.0f);
@@ -74,6 +77,7 @@ public:
         prefs.putBool("swap", imu_swap_axis);
         prefs.putBool("invX", imu_invert_x);
         prefs.putBool("invY", imu_invert_y);
+        prefs.putUChar("imu_mount", mount_orientation);
 
         // 保存偏移量
         prefs.putFloat("off_lon", offset_lon);

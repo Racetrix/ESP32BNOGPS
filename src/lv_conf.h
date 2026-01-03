@@ -29,10 +29,33 @@
 #define LV_LOG_LEVEL LV_LOG_LEVEL_INFO
 
 // 字体
-#define LV_FONT_MONTSERRAT_14 1 // 用于小标签
-#define LV_FONT_MONTSERRAT_20 1 // 用于普通数字
-#define LV_FONT_MONTSERRAT_28 1 // 用于大标题
-#define LV_FONT_MONTSERRAT_48 1 // 用于超大速度值
+/*==================
+ * FONT USAGE
+ *================*/
+
+/* Montserrat fonts with ASCII range and some symbols using bpp = 4
+ * https://fonts.google.com/specimen/Montserrat */
+#define LV_FONT_MONTSERRAT_8 0
+#define LV_FONT_MONTSERRAT_10 0
+#define LV_FONT_MONTSERRAT_12 0
+#define LV_FONT_MONTSERRAT_14 1 // <--- 确保这个是 1 (小字)
+#define LV_FONT_MONTSERRAT_16 0
+#define LV_FONT_MONTSERRAT_18 0
+#define LV_FONT_MONTSERRAT_20 1 // <--- 把这个改成 1 (中号字，我刚才用的就是这个)
+#define LV_FONT_MONTSERRAT_22 0
+#define LV_FONT_MONTSERRAT_24 0
+#define LV_FONT_MONTSERRAT_26 0
+#define LV_FONT_MONTSERRAT_28 1
+#define LV_FONT_MONTSERRAT_30 0
+#define LV_FONT_MONTSERRAT_32 0
+#define LV_FONT_MONTSERRAT_34 0
+#define LV_FONT_MONTSERRAT_36 0
+#define LV_FONT_MONTSERRAT_38 0
+#define LV_FONT_MONTSERRAT_40 1
+#define LV_FONT_MONTSERRAT_42 0
+#define LV_FONT_MONTSERRAT_44 0
+#define LV_FONT_MONTSERRAT_46 0
+#define LV_FONT_MONTSERRAT_48 1 // <--- 强烈建议把这个也改成 1 (特大号字)
 
 // 启用 FPS 监视器 (会在屏幕角落显示帧率)
 // #define LV_USE_PERF_MONITOR 1

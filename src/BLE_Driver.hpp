@@ -1,90 +1,143 @@
 #pragma once
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#include <NimBLEServer.h>
+#include <NimBLEUtils.h>
+#include <NimBLECharacteristic.h>
 
-#define SERVICE_UUID "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
-#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
-#define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+// 1. 定义回调函数类型
+typedef void (*BLERecvCallback)(String);
 
-// 1. 定义接收回调类 (处理手机发来的数据)
+// 2. 全局静态变量 (解决作用域问题)
+// 放在最上面，这样回调类和驱动类都能访问，不会报错
+static BLERecvCallback _onDataRecv = NULL;
+static volatile bool _ble_connected = false;
+
+// 3. [新增] 专门处理连接状态的回调类 (继承 ServerCallbacks)
+class MyServerCallbacks : public NimBLEServerCallbacks
+{
+    void onConnect(NimBLEServer *pServer)
+    {
+        _ble_connected = true; // 修改静态变量
+        Serial.println("[BLE] Device Connected");
+    };
+
+    void onDisconnect(NimBLEServer *pServer)
+    {
+        _ble_connected = false; // 修改静态变量
+        Serial.println("[BLE] Device Disconnected");
+
+        // 关键：断开后立即重新广播，方便手机重连
+        // 不重置系统状态，不退出赛道模式
+        NimBLEDevice::startAdvertising();
+    }
+};
+
+// 4. [修改] 专门处理数据接收的回调类 (继承 CharacteristicCallbacks)
 class RxCallbacks : public NimBLECharacteristicCallbacks
 {
-    NimBLECharacteristic *_pTxCharacteristic;
-
-public:
-    // 构造函数传入 TX 特征的指针，方便我们回传数据
-    RxCallbacks(NimBLECharacteristic *pTx) : _pTxCharacteristic(pTx) {}
-
-    // 当手机写入数据时触发
-    void onWrite(NimBLECharacteristic *pCharacteristic) override
+    void onWrite(NimBLECharacteristic *pCharacteristic)
     {
         std::string rxValue = pCharacteristic->getValue();
-
         if (rxValue.length() > 0)
         {
-            // A. 在串口打印收到的内容 (调试用)
-            Serial.print("[BLE RX]: ");
-            Serial.println(rxValue.c_str());
-
-            // B. 回声逻辑：把收到的数据原样发回去
-            if (_pTxCharacteristic)
+            if (_onDataRecv != NULL)
             {
-                // 加上前缀 "Echo: " 让你知道这是回传的
-                std::string echoStr = "Echo: " + rxValue + "\n";
-                _pTxCharacteristic->setValue((uint8_t *)echoStr.c_str(), echoStr.length());
-                _pTxCharacteristic->notify();
+                // 转成 Arduino String 传出去
+                _onDataRecv(String(rxValue.c_str()));
             }
         }
     }
 };
 
-class BLE_Driver : public NimBLEServerCallbacks
+class BLE_Driver
 {
 private:
-    NimBLEServer *pServer = NULL;
-    NimBLECharacteristic *pTxCharacteristic = NULL;
-    bool deviceConnected = false;
+    NimBLEServer *pServer;
+    NimBLEService *pService;
+    NimBLECharacteristic *pTxCharacteristic;
+    NimBLECharacteristic *pRxCharacteristic;
 
 public:
-    void init(String deviceName)
+    // 发送锁 (防止心跳包打断长数据)
+    volatile bool isTxBusy = false;
+
+    void init(String deviceName, BLERecvCallback cb = NULL)
     {
+        if (cb != NULL)
+        {
+            _onDataRecv = cb;
+        }
+
         NimBLEDevice::init(deviceName.c_str());
-        NimBLEDevice::setPower(ESP_PWR_LVL_P9);
-
         pServer = NimBLEDevice::createServer();
-        pServer->setCallbacks(this);
 
-        NimBLEService *pService = pServer->createService(SERVICE_UUID);
+        // [修复] 注册连接回调 (取消注释)
+        pServer->setCallbacks(new MyServerCallbacks());
 
-        // 创建 TX (发送)
+        pService = pServer->createService("6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
+
+        // Tx (Notify)
         pTxCharacteristic = pService->createCharacteristic(
-            CHARACTERISTIC_UUID_TX,
+            "6E400003-B5A3-F393-E0A9-E50E24DCCA9E",
             NIMBLE_PROPERTY::NOTIFY);
 
-        // 创建 RX (接收)
-        NimBLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
-            CHARACTERISTIC_UUID_RX,
+        // Rx (Write)
+        pRxCharacteristic = pService->createCharacteristic(
+            "6E400002-B5A3-F393-E0A9-E50E24DCCA9E",
             NIMBLE_PROPERTY::WRITE);
 
-        // 【关键】设置 RX 回调，把 TX 指针传进去以便回传
-        pRxCharacteristic->setCallbacks(new RxCallbacks(pTxCharacteristic));
+        pRxCharacteristic->setCallbacks(new RxCallbacks());
 
         pService->start();
-
         NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
-        pAdvertising->addServiceUUID(SERVICE_UUID);
+        pAdvertising->addServiceUUID("6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
         pAdvertising->setScanResponse(true);
         pAdvertising->start();
 
-        Serial.println("[BLE] Echo Service Started!");
+        Serial.println("BLE Started. Waiting for connections...");
     }
 
-    // 主动发送函数 (给 task_logging 用)
+    // 停止/开始心跳包发送的辅助函数
+    void stopHealthPack()
+    {
+        isTxBusy = true;
+    }
+    void startHealthPack()
+    {
+        isTxBusy = false;
+    }
+
+    void send(std::string text)
+    {
+        // 使用静态变量判断连接
+        if (_ble_connected)
+        {
+            pTxCharacteristic->setValue(text);
+            pTxCharacteristic->notify();
+        }
+    }
+
+    // 重载 1: 支持 Arduino String
+    void send(String text)
+    {
+        send(std::string(text.c_str()));
+    }
+
+    // 重载 2: 支持 C 风格字符串
+    void send(const char *text)
+    {
+        send(std::string(text));
+    }
+
+    // [修改] 获取连接状态
+    bool isConnected()
+    {
+        return _ble_connected;
+    }
+
     void printf(const char *format, ...)
     {
-        if (!deviceConnected || !pTxCharacteristic)
-            return;
-
         char loc_buf[64];
         char *temp = loc_buf;
         va_list arg;
@@ -93,37 +146,28 @@ public:
         va_copy(copy, arg);
         int len = vsnprintf(temp, sizeof(loc_buf), format, copy);
         va_end(copy);
-
+        if (len < 0)
+        {
+            va_end(arg);
+            return;
+        }
         if (len >= sizeof(loc_buf))
         {
-            temp = new char[len + 1];
-            vsnprintf(temp, len + 1, format, arg);
+            temp = (char *)malloc(len + 1);
+            if (temp == NULL)
+            {
+                va_end(arg);
+                return;
+            }
+            len = vsnprintf(temp, len + 1, format, arg);
         }
         va_end(arg);
-
-        pTxCharacteristic->setValue((uint8_t *)temp, len);
-        pTxCharacteristic->notify();
-
-        if (len >= sizeof(loc_buf))
+        send(temp);
+        if (temp != loc_buf)
         {
-            delete[] temp;
+            free(temp);
         }
     }
-
-    void onConnect(NimBLEServer *pServer)
-    {
-        deviceConnected = true;
-        Serial.println("[BLE] Connected!");
-    };
-
-    void onDisconnect(NimBLEServer *pServer)
-    {
-        deviceConnected = false;
-        Serial.println("[BLE] Disconnected.");
-        NimBLEDevice::startAdvertising();
-    }
-
-    bool isConnected() { return deviceConnected; }
 };
 
-BLE_Driver ble;
+extern BLE_Driver ble;

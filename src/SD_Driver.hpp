@@ -13,7 +13,7 @@
 #define SD_D3 47
 
 // --- 新增：全局状态标志 ---
-bool sd_connected = false;
+extern bool sd_connected;
 
 bool initSD()
 {
