@@ -124,6 +124,8 @@ void task_sensors()
     trackMgr.update(
         gps.tgps.location.lat(),
         gps.tgps.location.lng(),
+        gps.tgps.course.deg(),
+        gps.getSpeed(),
         millis());
   }
 

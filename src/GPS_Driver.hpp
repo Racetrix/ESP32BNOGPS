@@ -57,6 +57,7 @@ public:
         if (sys_cfg.gps_10hz_mode && !_isConfigured && (millis() - _bootTime > 3000))
         {
             setUblox10Hz(); // 发送指令
+            setUbloxGPSBeiDou();
             _isConfigured = true;   // 标记已完成，以后不再发
         }
     }
@@ -89,6 +90,58 @@ public:
 
         // 建议等待一小会儿让模块处理
         delay(100);
+    }
+    void setUbloxGPSBeiDou()
+    {
+        // 指令含义: 配置 GNSS 星座 (UBX-CFG-GNSS)
+        // 我们将显式配置 5 个星座块: GPS, SBAS, BeiDou, QZSS, GLONASS
+        // 策略: 开启 GPS+北斗+SBAS，关闭 GLONASS+QZSS (为了在 10Hz 下节省芯片算力)
+
+        uint8_t packet[] = {
+            0xB5, 0x62, // 头部 (Header)
+            0x06, 0x3E, // Class ID (UBX-CFG-GNSS)
+            0x2C, 0x00, // 长度: 44 Bytes (Header 4 + 5个Block*8)
+
+            // --- Payload 开始 ---
+            0x00, 0x00, 0x20, 0x05, // msgVer=0, trkCh=32, count=5 (配置5个块)
+
+            // Block 1: GPS (ID 0) -> 开启
+            0x00, 0x08, 0x10, 0x00, 0x01, 0x00, 0x01, 0x01,
+
+            // Block 2: SBAS (ID 1) -> 开启 (增强定位)
+            0x01, 0x01, 0x03, 0x00, 0x01, 0x00, 0x01, 0x01,
+
+            // Block 3: BeiDou (ID 3) -> 开启 !!!
+            0x03, 0x08, 0x10, 0x00, 0x01, 0x00, 0x01, 0x01,
+
+            // Block 4: QZSS (ID 5) -> 关闭 (日本区域，国内没用，关掉省电)
+            0x05, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x01,
+
+            // Block 5: GLONASS (ID 6) -> 关闭 (为了给10Hz腾出算力，建议关掉)
+            0x06, 0x08, 0x0E, 0x00, 0x00, 0x00, 0x01, 0x01,
+            // --- Payload 结束 ---
+
+            0x00, 0x00 // 预留位置给校验和 (CK_A, CK_B)
+        };
+
+        // 自动计算校验和 (算法: RFC 1145 / UBX Standard)
+        // 从 Class (0x06) 开始算，不包含头部 0xB5 0x62
+        uint8_t ck_a = 0, ck_b = 0;
+        for (int i = 2; i < sizeof(packet) - 2; i++)
+        {
+            ck_a += packet[i];
+            ck_b += ck_a;
+        }
+
+        // 填入校验和
+        packet[sizeof(packet) - 2] = ck_a;
+        packet[sizeof(packet) - 1] = ck_b;
+
+        // 发送二进制数据
+        serial->write(packet, sizeof(packet));
+
+        // 这个指令比较重，建议多给点时间处理
+        delay(200);
     }
 };
 

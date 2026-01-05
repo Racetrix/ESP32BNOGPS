@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <vector>
 #include "Audio_Driver.hpp"
+
 // 定义回调函数类型
 typedef void (*TrackEventCallback)();
 
@@ -19,25 +20,28 @@ struct GeoPoint
 
 enum RaceState
 {
-    RACE_IDLE = 0,
-    RACE_RUNNING = 1,
-    RACE_FINISHED = 2
+    RACE_IDLE = 0,    // 闲置
+    RACE_ARMED = 1,   // 预备 (已进入高精度检测区)
+    RACE_RUNNING = 2, // 正在计时
+    RACE_FINISHED = 3 // 完成
 };
 
 class TrackManager
 {
 private:
-    // Audio_Driver  audio;
     TrackType type;
     GeoPoint startPoint;
     GeoPoint endPoint;
+
     bool _isArmed = false;
 
-    // --- [修改] 这里的半径改为变量，不再是 const ---
-    float triggerRadius = 10.0;            // 默认 10米，防止用户没设
-    const uint32_t LAP_COOLDOWN_MS = 5000; // 5秒冷却，避免反复触发
+    // [修改] 触发半径收缩到 3.0米
+    // 在 10Hz 下，200km/h 的车一帧跑 5.5米。
+    // 3.0米半径意味着检测窗口直径 6.0米，勉强能兜住高速冲线。
+    // 再小容易漏，再大容易误触。
+    float triggerRadius = 3.0;
+    const uint32_t LAP_COOLDOWN_MS = 5000;
 
-    // 运行时变量
     RaceState currentState = RACE_IDLE;
     uint32_t startTimeMs = 0;
     uint32_t lastTriggerTimeMs = 0;
@@ -47,10 +51,20 @@ private:
     uint32_t bestLapTime = 0xFFFFFFFF;
     int lapCount = 0;
 
+    double trackHeading = -1.0;
+
+    // 极值检测变量
+    float prevDistanceToStart = 99999.0;
+    float prevDistanceToEnd = 99999.0;
+
+    // [新增] 记录上一帧的时间戳，用于时间插值
+    uint32_t prevTimeMs = 0;
+
     TrackEventCallback onRaceStartCB = NULL;
     TrackEventCallback onRaceFinishCB = NULL;
+    TrackEventCallback onLapStartCB = NULL;
+    TrackEventCallback onLapFinishCB = NULL;
 
-    // Haversine 距离计算 (单位: 米)
     float getDistance(double lat1, double lon1, double lat2, double lon2)
     {
         const double R = 6371000.0;
@@ -63,37 +77,40 @@ private:
         return (float)(R * c);
     }
 
+    double getHeadingDiff(double h1, double h2)
+    {
+        double diff = abs(h1 - h2);
+        if (diff > 180.0)
+            diff = 360.0 - diff;
+        return diff;
+    }
+
 public:
     TrackManager()
     {
         bestLapTime = 0xFFFFFFFF;
     }
 
-    // --- [新增] 注册回调函数的接口 ---
     void attachOnStart(TrackEventCallback cb) { onRaceStartCB = cb; }
     void attachOnFinish(TrackEventCallback cb) { onRaceFinishCB = cb; }
+    void attachOnLapStart(TrackEventCallback cb) { onLapStartCB = cb; }
+    void attachOnLapFinish(TrackEventCallback cb) { onLapFinishCB = cb; }
 
-    // --- [修改] 初始化函数，增加 radius 参数 ---
     void setupTrack(TrackType t, float radius, double sLat, double sLon, double eLat, double eLon)
     {
         type = t;
-        triggerRadius = radius; // 设置自定义半径
+        // 忽略传入的 radius，强制使用 3.0米 的高精度逻辑
+        // 如果你需要兼容旧的大半径，可以把下面这行删掉
+        triggerRadius = radius;
+
         startPoint = {sLat, sLon};
-
         if (type == TRACK_TYPE_CIRCUIT)
-        {
             endPoint = startPoint;
-        }
         else
-        {
             endPoint = {eLat, eLon};
-        }
-
         resetSession();
-
         _isArmed = false;
-        Serial.printf("Track Setup: Mode=%d, Radius=%.1fm\n", type, triggerRadius);
-        Serial.printf("Start: %.6f, %.6f\n", sLat, sLon);
+        Serial.printf("Track Setup: Mode=%d, Pro-Radius=%.1fm\n", type, triggerRadius);
     }
 
     void resetSession()
@@ -105,24 +122,28 @@ public:
         lastLapTime = 0;
         bestLapTime = 0xFFFFFFFF;
         lapCount = 0;
+        trackHeading = -1.0;
+        prevDistanceToStart = 99999.0;
+        prevDistanceToEnd = 99999.0;
+        prevTimeMs = 0;
     }
 
     void enterStandbyMode()
     {
         resetSession();
-        _isArmed = true; // 开启保险，允许检测起点
-        Serial.println("[TRACK] System ARMED. Waiting for start trigger...");
+        _isArmed = true;
+        Serial.println("[TRACK] ARMED. Waiting (Pro-Mode)...");
     }
 
-    // [新增] 退出模式 (当用户点击 Cancel 退出等待界面时调用)
     void exitTrackMode()
     {
-        _isArmed = false; // 关上保险
+        _isArmed = false;
         currentState = RACE_IDLE;
-        Serial.println("[TRACK] System DISARMED.");
+        Serial.println("[TRACK] DISARMED.");
     }
 
-    void update(double currLat, double currLon, uint32_t now)
+    // [核心函数]
+    void update(double currLat, double currLon, double currHeading, float currSpeedKmh, uint32_t now)
     {
         if (!_isArmed || (abs(currLat) < 0.1 && abs(currLon) < 0.1))
             return;
@@ -130,63 +151,121 @@ public:
         float distToStart = getDistance(currLat, currLon, startPoint.lat, startPoint.lon);
         float distToEnd = getDistance(currLat, currLon, endPoint.lat, endPoint.lon);
 
-        // A. 还没开始 -> 检测起点
-        if (currentState == RACE_IDLE)
+        // --- 1. 检测比赛开始 ---
+        if (currentState == RACE_IDLE || currentState == RACE_ARMED)
         {
-            if (distToStart < triggerRadius)
+            if (distToStart < triggerRadius) // < 3.0米 才会进入判定
             {
-                if (now - lastTriggerTimeMs > LAP_COOLDOWN_MS)
+                // 提高速度门限到 8km/h，防止静止漂移误触
+                if (currSpeedKmh > 8.0)
                 {
-                    currentState = RACE_RUNNING;
-                    startTimeMs = now;
-                    lastTriggerTimeMs = now;
-                    currentLapTime = 0; // [新增] 强制归零
-                    lapCount = 1;
+                    // 距离开始变大 (说明上一帧就是最近点)
+                    if (currentState == RACE_ARMED && distToStart > prevDistanceToStart)
+                    {
+                        // [严格检查] 只有当最近点真的小于 1.5米 时才触发
+                        // 这杜绝了只是擦过 3米 圈边缘导致的误触
+                        if (prevDistanceToStart < 1.5 && (now - lastTriggerTimeMs > LAP_COOLDOWN_MS))
+                        {
+                            currentState = RACE_RUNNING;
 
-                    Serial.println("🏁 RACE START!");
-                    audioDriver.play("/mp3/race_start.mp3");
-                    if (onRaceStartCB != NULL)
-                        onRaceStartCB();
+                            // [回溯时间补偿]
+                            // 真实的过线时间其实发生在“上一帧”和“这一帧”之间
+                            // 简单起见，我们认为上一帧时刻 (prevTimeMs) 就是最近点时刻
+                            // 这样精度比直接用 now 要准 100ms
+                            uint32_t exactStartTime = (prevTimeMs > 0) ? prevTimeMs : now;
+
+                            startTimeMs = exactStartTime;
+                            lastTriggerTimeMs = now; // 冷却计时还是用 now
+                            currentLapTime = 0;
+                            lapCount = 1;
+                            trackHeading = currHeading;
+
+                            Serial.printf("🏁 START! (MinDist: %.2fm, TimeFix: -%dms)\n", prevDistanceToStart, now - exactStartTime);
+                            audioDriver.play("/mp3/race_start.mp3");
+
+                            if (onRaceStartCB != NULL)
+                                onRaceStartCB();
+                            if (onLapStartCB != NULL)
+                                onLapStartCB();
+                        }
+                    }
+                    else
+                    {
+                        currentState = RACE_ARMED;
+                    }
                 }
+            }
+            else
+            {
+                currentState = RACE_IDLE;
             }
         }
 
-        // B. 正在计时 -> 检测终点/新的一圈
+        // --- 2. 检测过线/终点 ---
         else if (currentState == RACE_RUNNING)
         {
-            // 实时更新当前圈时间
             currentLapTime = now - startTimeMs;
 
-            // 只有过了冷却时间才允许触发（防止在起跑线来回抖动触发）
             if (distToEnd < triggerRadius && (now - lastTriggerTimeMs > LAP_COOLDOWN_MS))
             {
-                lastTriggerTimeMs = now;
-                lastLapTime = currentLapTime; // 保存上一圈成绩
-
-                if (lastLapTime < bestLapTime)
-                    bestLapTime = lastLapTime;
-
-                Serial.printf("🏁 Lap/Finish! Time: %.3fs\n", lastLapTime / 1000.0);
-
-                // 根据模式决定是“结束”还是“下一圈”
-                if (type == TRACK_TYPE_SPRINT)
+                if (currSpeedKmh > 8.0)
                 {
-                    currentState = RACE_FINISHED;
-                    if (onRaceFinishCB != NULL)
-                        onRaceFinishCB();
-                }
-                else
-                {
-                    // === [核心修复] 跑圈模式逻辑 ===
-                    startTimeMs = now;  // 重置起跑时间为“现在”
-                    currentLapTime = 0; // 当前圈耗时立刻归零
-                    lapCount++;         // 圈数+1
+                    bool headingOK = true;
+                    if (trackHeading >= 0)
+                    {
+                        if (getHeadingDiff(currHeading, trackHeading) > 90.0)
+                            headingOK = false;
+                    }
 
-                    // 这里不需要调用 Finish 回调，因为还在跑
-                    // 但你可以加一个 playBeep() 提示过线
+                    // 同样加上严格距离检查 (< 1.5m)
+                    if (headingOK && distToEnd > prevDistanceToEnd && prevDistanceToEnd < 1.5)
+                    {
+                        // [回溯时间补偿]
+                        uint32_t exactFinishTime = (prevTimeMs > 0) ? prevTimeMs : now;
+
+                        // 计算修正后的圈速
+                        // 圈速 = (结束时刻 - 开始时刻)
+                        // 注意：startTimeMs 已经是修正过的了，所以这里直接减
+                        uint32_t correctedLapTime = exactFinishTime - startTimeMs;
+
+                        // 更新基准时间
+                        lastTriggerTimeMs = now;
+                        lastLapTime = correctedLapTime;
+
+                        if (lastLapTime < bestLapTime)
+                            bestLapTime = lastLapTime;
+                        Serial.printf("🏁 LAP! Time: %.3fs (MinDist: %.2fm)\n", lastLapTime / 1000.0, prevDistanceToEnd);
+
+                        if (type == TRACK_TYPE_SPRINT)
+                        {
+                            currentState = RACE_FINISHED;
+                            if (onLapFinishCB != NULL)
+                                onLapFinishCB();
+                            if (onRaceFinishCB != NULL)
+                                onRaceFinishCB();
+                        }
+                        else
+                        {
+                            if (onLapFinishCB != NULL)
+                                onLapFinishCB();
+
+                            // 这一圈的结束时间，就是下一圈的开始时间！
+                            startTimeMs = exactFinishTime;
+                            currentLapTime = 0;
+                            lapCount++;
+
+                            if (onLapStartCB != NULL)
+                                onLapStartCB();
+                        }
+                    }
                 }
             }
         }
+
+        // 更新历史记录
+        prevDistanceToStart = distToStart;
+        prevDistanceToEnd = distToEnd;
+        prevTimeMs = now; // [关键] 记录这一帧的时间
     }
 
     String getFormattedTime(uint32_t ms)
@@ -201,39 +280,15 @@ public:
         return String(buf);
     }
 
-    // [新增] 判断当前是否配置了赛道
-    bool isTrackSetup()
-    {
-        // 只要起点坐标有效 (> 0.1)，就视为已配置赛道
-        return (abs(startPoint.lat) > 0.1 && abs(startPoint.lon) > 0.1);
-    }
-
-    // [新增] 获取当前赛道类型 (配合上面的判断使用)
-    int getCurrentTrackType()
-    {
-        return (int)type;
-    }
-    uint32_t getCurrentLapElapsed()
-    {
-        if (currentState == RACE_RUNNING)
-        {
-            // 实时计算，保证毫秒级平滑
-            return millis() - startTimeMs;
-        }
-        return 0;
-    }
+    bool isTrackSetup() { return (abs(startPoint.lat) > 0.1); }
+    int getCurrentTrackType() { return (int)type; }
+    uint32_t getCurrentLapElapsed() { return (currentState == RACE_RUNNING) ? (millis() - startTimeMs) : 0; }
     void getStartPoint(double &lat, double &lon)
     {
         lat = startPoint.lat;
         lon = startPoint.lon;
     }
-
-    bool isArmed()
-    {
-        return _isArmed;
-    }
-
-    // 获取当前赛道配置的半径
+    bool isArmed() { return _isArmed; }
     float getTriggerRadius() { return triggerRadius; }
     String getCurrentTimeStr() { return getFormattedTime(currentLapTime); }
     String getLastLapStr() { return getFormattedTime(lastLapTime); }
