@@ -157,7 +157,7 @@ public:
             if (distToStart < triggerRadius) // < 3.0米 才会进入判定
             {
                 // 提高速度门限到 8km/h，防止静止漂移误触
-                if (currSpeedKmh > 8.0)
+                if (true)// (currSpeedKmh > 8.0)
                 {
                     // 距离开始变大 (说明上一帧就是最近点)
                     if (currentState == RACE_ARMED && distToStart > prevDistanceToStart)
@@ -280,7 +280,7 @@ public:
         return String(buf);
     }
 
-    bool isTrackSetup() { return (abs(startPoint.lat) > 0.1); }
+    bool isTrackSetup() { return (abs(startPoint.lat) > 0.1); }//{return !(currentState == RACE_IDLE);}// 
     int getCurrentTrackType() { return (int)type; }
     uint32_t getCurrentLapElapsed() { return (currentState == RACE_RUNNING) ? (millis() - startTimeMs) : 0; }
     void getStartPoint(double &lat, double &lon)

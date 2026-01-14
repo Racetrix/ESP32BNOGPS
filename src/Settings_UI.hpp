@@ -10,6 +10,9 @@ extern lv_obj_t *ui_ScreenMain;
 
 lv_obj_t *ui_ScreenSettings;
 
+LV_FONT_DECLARE(font_race);
+static lv_style_t style_zh;
+static bool style_zh_inited = false;
 // --- 事件回调 ---
 // [新增] 校准按钮的回调函数
 void btn_calibrate_event_cb(lv_event_t *e)
@@ -94,6 +97,7 @@ void sw_bt_event_cb(lv_event_t *e)
 {
     lv_obj_t *sw = lv_event_get_target(e);
     sys_cfg.bluetooth_on = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    //ble.setMode(sys_cfg.bluetooth_on ? BLE_MODE_TELEMETRY : BLE_MODE_RACECHRONO);
     sys_cfg.save();
     Serial.println(sys_cfg.bluetooth_on ? "BT: ON" : "BT: OFF");
 }
@@ -143,8 +147,8 @@ void btn_mount_event_cb(lv_event_t *e)
         // 切换到 竖立 (Vertical)
         sys_cfg.mount_orientation = 1;
 
-        // 更新 UI
-        lv_label_set_text(label, "VERT");
+        // 更新 UI (使用中文)
+        lv_label_set_text(label, "垂直");                                         // VERT -> 垂直
         lv_obj_set_style_text_color(label, lv_color_hex(0x00FF00), LV_PART_MAIN); // 绿色
     }
     else
@@ -152,8 +156,8 @@ void btn_mount_event_cb(lv_event_t *e)
         // 切换到 平躺 (Flat)
         sys_cfg.mount_orientation = 0;
 
-        // 更新 UI
-        lv_label_set_text(label, "FLAT");
+        // 更新 UI (使用中文)
+        lv_label_set_text(label, "平放");                                         // FLAT -> 平放
         lv_obj_set_style_text_color(label, lv_color_hex(0x00AEEF), LV_PART_MAIN); // 蓝色
     }
 
@@ -167,6 +171,7 @@ void btn_mount_event_cb(lv_event_t *e)
     imu.lon_g = 0;
     imu.lat_g = 0;
 
+    // 串口日志建议保留英文，方便调试，或者你也可以改成中文
     Serial.printf("Mount Orientation: %s\n", sys_cfg.mount_orientation ? "VERTICAL" : "FLAT");
 }
 void btn_usb_mode_event_cb(lv_event_t *e)
@@ -178,6 +183,7 @@ void btn_usb_mode_event_cb(lv_event_t *e)
 }
 
 // 辅助函数：创建普通设置行
+// 辅助函数：创建普通设置行
 void create_setting_item(lv_obj_t *parent, const char *text, bool current_state, lv_event_cb_t cb)
 {
     lv_obj_t *cont = lv_obj_create(parent);
@@ -185,12 +191,15 @@ void create_setting_item(lv_obj_t *parent, const char *text, bool current_state,
     lv_obj_set_style_bg_color(cont, lv_color_hex(0x222222), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(cont, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(cont, 0, LV_PART_MAIN);
-    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE); // 这一行本身不滚动，但也防止干扰
+    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *lbl = lv_label_create(cont);
     lv_label_set_text(lbl, text);
+
     lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, LV_PART_MAIN);
+
+    lv_obj_set_style_text_font(lbl, &font_race, LV_PART_MAIN);
+
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 5, 0);
 
     lv_obj_t *sw = lv_switch_create(cont);
@@ -238,16 +247,24 @@ void build_settings_page()
     if (ui_ScreenSettings)
         return;
 
+    // --- [中文样式初始化] ---
+    if (!style_zh_inited)
+    {
+        lv_style_init(&style_zh);
+        lv_style_set_text_font(&style_zh, &font_race);     // 设置中文字体
+        lv_style_set_text_color(&style_zh, lv_color_white()); // 默认白色
+        style_zh_inited = true;
+    }
+
     ui_ScreenSettings = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(ui_ScreenSettings, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(ui_ScreenSettings, LV_OPA_COVER, LV_PART_MAIN);
-    // 禁止整个屏幕滚动，只让里面的 list 滚
     lv_obj_set_scrollbar_mode(ui_ScreenSettings, LV_SCROLLBAR_MODE_OFF);
     lv_obj_clear_flag(ui_ScreenSettings, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_add_event_cb(ui_ScreenSettings, screen_gesture_event_cb, LV_EVENT_GESTURE, NULL);
 
-    // 顶部标题
+    // 顶部标题栏
     lv_obj_t *header = lv_obj_create(ui_ScreenSettings);
     lv_obj_set_size(header, 320, 40);
     lv_obj_set_style_bg_color(header, lv_color_hex(0x333333), LV_PART_MAIN);
@@ -256,8 +273,10 @@ void build_settings_page()
     lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
 
     lv_obj_t *title = lv_label_create(header);
-    lv_label_set_text(title, "SETTINGS");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, LV_PART_MAIN);
+    // [修改] 应用中文样式
+    lv_obj_add_style(title, &style_zh, 0);
+    lv_label_set_text(title, "系统设置"); // SETTINGS -> 系统设置
+    // 注意：原本设置了 montserrat_20，现在的 style_zh 会覆盖字体，但颜色需要重新确认
     lv_obj_set_style_text_color(title, lv_color_hex(0x00AEEF), LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 5, 0);
 
@@ -268,7 +287,9 @@ void build_settings_page()
     lv_obj_add_event_cb(btn_back, btn_settings_back_event_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *lbl_back = lv_label_create(btn_back);
-    lv_label_set_text(lbl_back, "BACK");
+    // [修改] 应用中文样式
+    lv_obj_add_style(lbl_back, &style_zh, 0);
+    lv_label_set_text(lbl_back, "返回"); // BACK -> 返回
     lv_obj_center(lbl_back);
 
     // 设置列表容器
@@ -276,33 +297,31 @@ void build_settings_page()
     lv_obj_set_size(list_cont, 320, 200);
     lv_obj_align(list_cont, LV_ALIGN_TOP_MID, 0, 45);
 
-    // 样式调整
     lv_obj_set_style_bg_color(list_cont, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(list_cont, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(list_cont, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(list_cont, 0, LV_PART_MAIN);
-
-    // 消除默认 Padding，确保宽度 300 的子对象不会撑出滚动条
     lv_obj_set_style_pad_all(list_cont, 10, LV_PART_MAIN);
-
     lv_obj_set_flex_flow(list_cont, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(list_cont, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_row(list_cont, 10, LV_PART_MAIN);
-
-    // 【核心修复】强制只允许垂直滚动！
-    // 这样左右滑动的操作就会全部交给内部的滑块，而不会触发页面滚动
     lv_obj_set_scroll_dir(list_cont, LV_DIR_VER);
+    lv_obj_clear_flag(list_cont, LV_OBJ_FLAG_SCROLL_ELASTIC);
 
     // --- 添加设置项 ---
+
+    // [警告] 你需要进入 create_volume_item 内部，给里面的 label 也加上 style_zh
     create_volume_item(list_cont);
 
-    create_setting_item(list_cont, "Bluetooth", sys_cfg.bluetooth_on, sw_bt_event_cb);
-    create_setting_item(list_cont, "GPS 10Hz Mode (Log)", sys_cfg.gps_10hz_mode, sw_gps_event_cb);
-    create_setting_item(list_cont, "Swap G-Ball Axis (X/Y)", sys_cfg.imu_swap_axis, sw_imu_swap_event_cb);
-    create_setting_item(list_cont, "Invert G-Ball X", sys_cfg.imu_invert_x, sw_imu_inv_x_event_cb);
-    create_setting_item(list_cont, "Invert G-Ball Y", sys_cfg.imu_invert_y, sw_imu_inv_y_event_cb);
+    // [警告] 下面这些中文参数，需要你的 create_setting_item 函数内部支持中文字体
+    // 请修改 create_setting_item，在创建 Label 后调用 lv_obj_add_style(label, &style_zh, 0);
+    create_setting_item(list_cont, "蓝牙输出 (RaceChrono)", sys_cfg.bluetooth_on, sw_bt_event_cb);
+    create_setting_item(list_cont, "GPS 10Hz 高刷模式", sys_cfg.gps_10hz_mode, sw_gps_event_cb);
+    create_setting_item(list_cont, "交换 G值轴 (X/Y)", sys_cfg.imu_swap_axis, sw_imu_swap_event_cb);
+    create_setting_item(list_cont, "反转 X 轴方向", sys_cfg.imu_invert_x, sw_imu_inv_x_event_cb);
+    create_setting_item(list_cont, "反转 Y 轴方向", sys_cfg.imu_invert_y, sw_imu_inv_y_event_cb);
 
-    // [新增] 添加校准按钮
+    // [校准按钮]
     lv_obj_t *cont_cali = lv_obj_create(list_cont);
     lv_obj_set_size(cont_cali, 300, 50);
     lv_obj_set_style_bg_color(cont_cali, lv_color_hex(0x222222), LV_PART_MAIN);
@@ -311,21 +330,25 @@ void build_settings_page()
     lv_obj_clear_flag(cont_cali, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *lbl_cali = lv_label_create(cont_cali);
-    lv_label_set_text(lbl_cali, "Zero Calibration"); // 归零/调平
+    // [修改] 应用中文样式
+    lv_obj_add_style(lbl_cali, &style_zh, 0);
+    lv_label_set_text(lbl_cali, "G值水平校准"); // Zero Calibration -> G值水平校准
     lv_obj_set_style_text_color(lbl_cali, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_align(lbl_cali, LV_ALIGN_LEFT_MID, 5, 0);
 
     lv_obj_t *btn_cali = lv_btn_create(cont_cali);
     lv_obj_set_size(btn_cali, 100, 30);
     lv_obj_align(btn_cali, LV_ALIGN_RIGHT_MID, -5, 0);
-    lv_obj_set_style_bg_color(btn_cali, lv_color_hex(0xFF5722), LV_PART_MAIN); // 橙色按钮醒目一点
+    lv_obj_set_style_bg_color(btn_cali, lv_color_hex(0xFF5722), LV_PART_MAIN);
     lv_obj_add_event_cb(btn_cali, btn_calibrate_event_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *lbl_btn_cali = lv_label_create(btn_cali);
-    lv_label_set_text(lbl_btn_cali, "LEVEL");
+    // [修改] 应用中文样式
+    lv_obj_add_style(lbl_btn_cali, &style_zh, 0);
+    lv_label_set_text(lbl_btn_cali, "校准"); // LEVEL -> 校准
     lv_obj_center(lbl_btn_cali);
 
-    // [新增] 安装方向设置 (Mount Orientation)
+    // [安装方向设置]
     lv_obj_t *cont_mount = lv_obj_create(list_cont);
     lv_obj_set_size(cont_mount, 300, 50);
     lv_obj_set_style_bg_color(cont_mount, lv_color_hex(0x222222), LV_PART_MAIN);
@@ -334,32 +357,36 @@ void build_settings_page()
     lv_obj_clear_flag(cont_mount, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *lbl_mount = lv_label_create(cont_mount);
-    lv_label_set_text(lbl_mount, "Mount Orientation");
+    // [修改] 应用中文样式
+    lv_obj_add_style(lbl_mount, &style_zh, 0);
+    lv_label_set_text(lbl_mount, "设备安装方向"); // Mount Orientation -> 设备安装方向
     lv_obj_set_style_text_color(lbl_mount, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl_mount, &lv_font_montserrat_14, LV_PART_MAIN);
+    // 注意：原本使用了 montserrat_14，这里style_zh会覆盖它
     lv_obj_align(lbl_mount, LV_ALIGN_LEFT_MID, 5, 0);
 
     lv_obj_t *btn_mount = lv_btn_create(cont_mount);
     lv_obj_set_size(btn_mount, 80, 30);
     lv_obj_align(btn_mount, LV_ALIGN_RIGHT_MID, -5, 0);
-    lv_obj_set_style_bg_color(btn_mount, lv_color_hex(0x333333), LV_PART_MAIN); // 以此深色背景衬托文字颜色
+    lv_obj_set_style_bg_color(btn_mount, lv_color_hex(0x333333), LV_PART_MAIN);
     lv_obj_add_event_cb(btn_mount, btn_mount_event_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *lbl_btn_mount = lv_label_create(btn_mount);
-    // 根据当前配置初始化文字和颜色
+    // [修改] 应用中文样式
+    lv_obj_add_style(lbl_btn_mount, &style_zh, 0);
+
     if (sys_cfg.mount_orientation == 1)
     {
-        lv_label_set_text(lbl_btn_mount, "VERT");
+        lv_label_set_text(lbl_btn_mount, "垂直"); // VERT -> 垂直
         lv_obj_set_style_text_color(lbl_btn_mount, lv_color_hex(0x00FF00), LV_PART_MAIN);
     }
     else
     {
-        lv_label_set_text(lbl_btn_mount, "FLAT");
+        lv_label_set_text(lbl_btn_mount, "平放"); // FLAT -> 平放
         lv_obj_set_style_text_color(lbl_btn_mount, lv_color_hex(0x00AEEF), LV_PART_MAIN);
     }
     lv_obj_center(lbl_btn_mount);
 
-    // USB 模式按钮
+    // [USB 模式按钮]
     lv_obj_t *cont_usb = lv_obj_create(list_cont);
     lv_obj_set_size(cont_usb, 300, 50);
     lv_obj_set_style_bg_color(cont_usb, lv_color_hex(0x222222), LV_PART_MAIN);
@@ -368,7 +395,9 @@ void build_settings_page()
     lv_obj_clear_flag(cont_usb, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *lbl_usb = lv_label_create(cont_usb);
-    lv_label_set_text(lbl_usb, "USB Card Reader Mode");
+    // [修改] 应用中文样式
+    lv_obj_add_style(lbl_usb, &style_zh, 0);
+    lv_label_set_text(lbl_usb, "USB 读卡器模式"); // USB Card Reader Mode
     lv_obj_set_style_text_color(lbl_usb, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_align(lbl_usb, LV_ALIGN_LEFT_MID, 5, 0);
 
@@ -379,6 +408,8 @@ void build_settings_page()
     lv_obj_add_event_cb(btn_usb, btn_usb_mode_event_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *lbl_btn_usb = lv_label_create(btn_usb);
-    lv_label_set_text(lbl_btn_usb, "ENTER");
+    // [修改] 应用中文样式
+    lv_obj_add_style(lbl_btn_usb, &style_zh, 0);
+    lv_label_set_text(lbl_btn_usb, "进入"); // ENTER -> 进入
     lv_obj_center(lbl_btn_usb);
 }

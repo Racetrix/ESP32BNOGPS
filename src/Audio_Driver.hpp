@@ -4,6 +4,7 @@
 #include "Audio.h"
 #include "SD_MMC.h"
 #include "FS.h"
+#include <vector> // 引入向量容器
 
 // ==========================================
 // ⚡️ 防卡顿配置：多线程 + 黄金参数
@@ -21,6 +22,9 @@
 class Audio_Driver
 {
 private:
+    SemaphoreHandle_t _mutex;      // 互斥锁，保护播放列表
+    std::vector<String> _playlist; // 播放队列
+
     void writeReg(uint8_t reg, uint8_t data)
     {
         Wire.beginTransmission(ES8311_ADDR);
@@ -71,25 +75,76 @@ private:
     }
 
     // ---------------------------------------------------------
-    // 🧵 新增：独立音频任务 (运行在 Core 0)
+    // 🧵 独立音频任务 (运行在 Core 0)
+    // ---------------------------------------------------------
+    // ---------------------------------------------------------
+    // 🧵 独立音频任务 (运行在 Core 0) - 极速版
     // ---------------------------------------------------------
     static void audioTask(void *parameter)
     {
         Audio_Driver *driver = (Audio_Driver *)parameter;
+
         while (true)
         {
-            // 疯狂循环，专门负责搬运音频数据
+            // 1. 核心循环：驱动音频库
             driver->audio.loop();
 
-            // 给看门狗一点喘息时间，但不能太长，1ms 足矣
-            // 如果觉得还卡，可以试着把这一行注释掉
-            vTaskDelay(1);
+            // 2. 队列管理逻辑
+            // 只有当音乐停止时，才去检查队列
+            if (!driver->audio.isRunning())
+            {
+                // 尝试获取锁 (不等待，能拿就拿，拿不到下一圈再试，保证 loop 不卡顿)
+                if (xSemaphoreTake(driver->_mutex, 0) == pdTRUE)
+                {
+                    if (!driver->_playlist.empty())
+                    {
+                        // 取出第一首
+                        String nextFile = driver->_playlist.front();
+                        driver->_playlist.erase(driver->_playlist.begin());
+
+                        // ❌ 删除这里的 Serial.print，它会严重阻塞 CPU！
+
+                        if (SD_MMC.exists(nextFile))
+                        {
+                            // ⚡️ 核心优化：直接连接，不打印日志
+                            driver->audio.connecttoFS(SD_MMC, nextFile.c_str());
+                            driver->isPlaying = true;
+                        }
+                    }
+                    else
+                    {
+                        driver->isPlaying = false;
+                    }
+
+                    xSemaphoreGive(driver->_mutex);
+                }
+
+                // 空闲状态：没有在播放，也没歌了，可以休息久一点省电
+                if (!driver->isPlaying)
+                {
+                    vTaskDelay(10);
+                }
+            }
+            else
+            {
+                // ⚡️ 播放状态：全速运行！
+                // 移除 vTaskDelay(1)，给音频库最大的 CPU 时间片
+                // 只有在 ESP32 只有单核时才需要 delay，双核 Core 0 独占时不需要
+                // 这里的 yield 是为了防止看门狗复位，但比 delay 快得多
+                taskYIELD();
+            }
         }
     }
 
 public:
     Audio audio;
-    bool isPlaying = false;
+    bool isPlaying = false; // 指示是否有任务正在进行（包括队列中）
+
+    Audio_Driver()
+    {
+        // 创建互斥锁
+        _mutex = xSemaphoreCreateMutex();
+    }
 
     void begin()
     {
@@ -106,37 +161,57 @@ public:
         setVolume(10);
 
         // ---------------------------------------------------------
-        // 🚀 核心修改：创建独立任务
+        // 🚀 创建独立任务
         // ---------------------------------------------------------
-        // 参数说明：任务函数, 任务名, 栈大小(4K), 参数(this), 优先级(最高), 句柄, 核心(0)
         xTaskCreatePinnedToCore(
-            audioTask,   // 任务函数
-            "AudioTask", // 任务名
-            4096,        // 栈大小 (4KB足够)
-            this,        // 把自己传进去
-            20,          // 优先级 (设高一点，比 LVGL 高)
-            NULL,        // 句柄
-            0            // 运行在核心 0 (LVGL 在核心 1)
-        );
+            audioTask,
+            "AudioTask",
+            4096,
+            this,
+            20,
+            NULL,
+            0);
 
-        Serial.println("[Audio] Running on Core 0 (Separate Thread)");
+        Serial.println("[Audio] Running on Core 0 (Queue Enabled)");
     }
 
+    // 修改后的 play：只负责加入队列
+    void play(String filename)
+    {
+        // 获取互斥锁 (无限等待直到获取到锁)
+        xSemaphoreTake(_mutex, portMAX_DELAY);
+
+        // 加入队列
+        _playlist.push_back(filename);
+
+        // 标记为正在播放状态 (实际上可能还没开始，但在排队了)
+        isPlaying = true;
+
+        // 释放锁
+        xSemaphoreGive(_mutex);
+    }
+
+    // 兼容旧的 const char* 调用
     void play(const char *filename)
     {
-        if (!SD_MMC.exists(filename))
-            return;
-        audio.connecttoFS(SD_MMC, filename);
-        isPlaying = true;
+        play(String(filename));
     }
 
-    // 主循环里其实不需要做事了，因为 Core 0 的任务在跑
-    // 但保留这个函数接口，防止 main.cpp 报错
+    // 紧急停止 (清空队列并停止当前播放)
+    void stop()
+    {
+        xSemaphoreTake(_mutex, portMAX_DELAY);
+        _playlist.clear(); // 清空队列
+        xSemaphoreGive(_mutex);
+
+        audio.stopSong(); // 停止当前
+        isPlaying = false;
+    }
+
+    // 主循环接口 (保留但留空)
     void loop()
     {
-        // 这里留空，千万不要再调 audio.loop() 了，否则双核打架会崩！
-        if (isPlaying && !audio.isRunning())
-            isPlaying = false;
+        // 空函数，逻辑都在 Task 里
     }
 
     void setVolume(uint8_t vol)
@@ -144,14 +219,8 @@ public:
         if (vol > 21)
             vol = 21;
         audio.setVolume(vol);
-        uint8_t chip_vol = map(vol, 0, 21, 0, 255);
+        uint8_t chip_vol = ::map(vol, 0, 21, 0, 255);
         writeReg(0x32, chip_vol);
-    }
-
-    void stop()
-    {
-        audio.stopSong();
-        isPlaying = false;
     }
 };
 

@@ -1,0 +1,86 @@
+name: Build and Release Firmware
+
+on:
+  push:
+    tags:
+      - 'v*' # 当你推送 v1.0, v2.0 等标签时触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 允许创建 Release
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install PlatformIO and esptool
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio esptool
+
+      - name: Compile Project
+        run: pio run
+        # 注意：如果你的 platformio.ini 有多个环境，这里可能需要指定 -e <env_name>
+        # 例如: pio run -e 4d_systems_esp32s3_gen4_r8n16
+
+      - name: Locate and Prepare Files
+        id: files
+        run: |
+          # 1. 找到编译生成的 build 目录 (假设只有一个环境，自动找最新的)
+          BUILD_DIR=$(find .pio/build -maxdepth 1 -type d -name "*" ! -name "." | head -n 1)
+          echo "Build Directory found: $BUILD_DIR"
+          
+          # 2. 找到 boot_app0.bin (它藏在 PIO 的包里)
+          # 在 GitHub Action 的 Linux 环境下，PIO 包通常在 ~/.platformio/packages
+          BOOT_APP0=$(find ~/.platformio/packages/framework-arduinoespressif32 -name boot_app0.bin | head -n 1)
+          echo "Boot_app0 found at: $BOOT_APP0"
+
+          # 3. 复制所有文件到当前目录方便操作
+          cp "$BUILD_DIR/bootloader.bin" .
+          cp "$BUILD_DIR/partitions.bin" .
+          cp "$BUILD_DIR/firmware.bin" .
+          cp "$BOOT_APP0" .
+          
+          # 检查文件是否存在
+          ls -lh *.bin
+
+      - name: Merge Firmware (The Golden Command)
+        run: |
+          # 使用我们验证过的“救砖参数”：DIO, 40m, 16MB
+          python -m esptool \
+            --chip esp32s3 merge_bin \
+            -o factory_firmware.bin \
+            --flash_mode dio \
+            --flash_freq 40m \
+            --flash_size 16MB \
+            0x0000 bootloader.bin \
+            0x8000 partitions.bin \
+            0xe000 boot_app0.bin \
+            0x10000 firmware.bin
+
+      - name: Create Release and Upload Asset
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: factory_firmware.bin
+          body: |
+            ## 🚀 Racetrix 固件更新
+            
+            **自动构建版本**: ${{ github.ref_name }}
+            
+            ### 📥 烧录指南
+            1. 下载 `factory_firmware.bin`。
+            2. 使用 [Web 烧录工具](https://espressif.github.io/esptool-js/)。
+            3. **关键设置**：
+               - Flash Mode: **Keep**
+               - Flash Freq: **Keep**
+               - Flash Size: **Keep**
+               - Address: **0x0000**
+            4. 烧录完成后按复位键。

@@ -11,7 +11,11 @@
 #include "BLE_Driver.hpp"
 #include "CMD_Parser.hpp"
 #include "Track_Manager.hpp"
+#include "lap_time_speaker.hpp"
 TrackManager trackMgr;
+
+LV_FONT_DECLARE(font_race);
+
 // 当赛道管理器检测到起跑时调用
 void handleRaceStart()
 {
@@ -27,6 +31,7 @@ void handleRaceStart()
 void handleRaceFinish()
 {
   Serial.println("[MAIN] Auto-Stop Logging Triggered by GPS!");
+  // playNumberCN(trackMgr.getLapCount());
   sys_cfg.is_running = false;
 }
 
@@ -77,7 +82,13 @@ void setup()
   }
 
   // 3. 初始化 BLE
-  ble.init("RaceDash_Telemetry", onBleDataReceived);
+  auto ble_mode = sys_cfg.bluetooth_on ? BLE_MODE_RACECHRONO : BLE_MODE_APP;
+  ble.init("RaceTrix_Telemetry", ble_mode, onBleDataReceived);
+  // if(sys_cfg.bluetooth_on){
+  //   ble.setMode(BLERunMode::BLE_MODE_RACECHRONO);
+  // }else{
+  //   ble.setMode(BLERunMode::BLE_MODE_TELEMETRY);
+  // }
 
   // 4. 初始化音频
   audioDriver.begin();
@@ -108,6 +119,7 @@ void setup()
   init_ui();
 
   Serial.println("--- System Started Successfully ---");
+
 }
 
 // ================= 任务调度区 =================
@@ -164,10 +176,27 @@ void task_logging()
   if (millis() - t_log >= 100)
   {
     t_log = millis();
-    // [修改] 只有当蓝牙不忙的时候，才尝试发送心跳
-    if (!ble.isTxBusy)
+    // ========================================================
+    // 🏁 情况 A: RaceChrono 模式 (发送 $RC3 高频数据)
+    // ========================================================
+    // RaceChrono 模式
+    if (ble.getMode() == BLE_MODE_RACECHRONO && ble.isConnected())
     {
-      cmdParser.sendTelemetry();
+      // 直接传入 GPS 对象，驱动会自动打包成二进制发走
+      ble.sendRaceChronoBinary(gps.tgps);
+    }
+    // ========================================================
+    // 📱 情况 B: APP 模式 (发送原来的遥测心跳)
+    // ========================================================
+    else if (ble.getMode() == BLE_MODE_APP && !ble.isTxBusy)
+    {
+      // 降低频率：APP 不需要 20Hz 这么快，可以加个分频
+      static uint8_t app_div = 0;
+      if (++app_div >= 2)
+      { // 20Hz / 2 = 10Hz
+        cmdParser.sendTelemetry();
+        app_div = 0;
+      }
     }
     if (sys_cfg.is_running && sd_connected)
     {
@@ -205,6 +234,23 @@ void task_ui_refresh()
 }
 void loop()
 {
+  if (Serial.available() > 0)
+  {
+    char cmd = Serial.read();
+
+    // 过滤掉回车换行符，防止触发两次
+    if (cmd == '\n' || cmd == '\r')
+      return;
+
+    if (cmd == '2')
+    {
+      Serial.println(">>> 指令收到: 播放测试数据 (112200ms)");
+
+      // 这里填入我们刚才讨论的测试数值
+      // 预期听到: "一分 五十二秒 二零"
+      playLapRecord(112200);
+    }
+  }
   task_sensors();
   task_logging();
   task_ui_engine();

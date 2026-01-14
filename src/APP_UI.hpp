@@ -101,14 +101,16 @@ void screen_gesture_event_cb(lv_event_t *e)
             {
                 if (!ui_ScreenMode)
                     build_mode_page();
-                lv_scr_load_anim(ui_ScreenMode, LV_SCR_LOAD_ANIM_MOVE_LEFT, 300, 0, false);
+                // 修改点：动画改为 NONE，时间改为 0
+                lv_scr_load_anim(ui_ScreenMode, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
             }
             // 右滑 -> 去设置 (如果有的话)
             else if (dir == LV_DIR_RIGHT)
             {
                 if (!ui_ScreenSettings)
                     build_settings_page();
-                lv_scr_load_anim(ui_ScreenSettings, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 300, 0, false);
+                // 修改点：动画改为 NONE，时间改为 0
+                lv_scr_load_anim(ui_ScreenSettings, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
             }
         }
 
@@ -117,15 +119,10 @@ void screen_gesture_event_cb(lv_event_t *e)
         {
             if (dir == LV_DIR_RIGHT) // 右滑 -> 返回主页
             {
-                lv_scr_load_anim(ui_ScreenMain, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 300, 0, false);
+                // 修改点：动画改为 NONE，时间改为 0
+                lv_scr_load_anim(ui_ScreenMain, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
             }
-            else if (dir == LV_DIR_LEFT) // [新增] 左滑 -> 去零百测试 (第3屏)
-            {
-                if (!ui_ScreenDrag)
-                    build_drag_page();
-                // 动画 MOVE_LEFT 表示新页面从右边进来
-                lv_scr_load_anim(ui_ScreenDrag, LV_SCR_LOAD_ANIM_MOVE_LEFT, 300, 0, false);
-            }
+            
         }
 
         // 3. 如果当前在 [零百测试页] (第3屏)
@@ -133,26 +130,26 @@ void screen_gesture_event_cb(lv_event_t *e)
         {
             if (dir == LV_DIR_RIGHT) // [新增] 右滑 -> 返回模式选择
             {
-                // 停止零百页面的定时器以省电 (可选)
+                // 停止零百页面的定时器以省电
                 if (timer_drag_refresh)
                 {
                     lv_timer_del(timer_drag_refresh);
                     timer_drag_refresh = NULL;
                 }
 
-                // 确保 Mode 页面还在
                 if (!ui_ScreenMode)
                     build_mode_page();
 
-                // 动画 MOVE_RIGHT 表示新页面从左边回来
-                lv_scr_load_anim(ui_ScreenMode, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 300, 0, false);
+                // 修改点：动画改为 NONE，时间改为 0
+                lv_scr_load_anim(ui_ScreenMode, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
             }
         }
 
-        // 4. 设置页 (略)
+        // 4. 设置页
         else if (current_scr == ui_ScreenSettings && dir == LV_DIR_LEFT)
         {
-            lv_scr_load_anim(ui_ScreenMain, LV_SCR_LOAD_ANIM_MOVE_LEFT, 300, 0, false);
+            // 修改点：动画改为 NONE，时间改为 0
+            lv_scr_load_anim(ui_ScreenMain, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
         }
     }
 }

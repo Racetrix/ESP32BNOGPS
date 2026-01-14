@@ -1,10 +1,13 @@
 #pragma once
 #include <Arduino.h>
 #include <TinyGPS++.h>
+#include "BLE_Driver.hpp"
+#include "GPSAutoBaud.hpp"
 // #include "System_Config.hpp"
 // 定义全局日志缓冲区
 extern String gps_log_buffer;
 // extern bool gps_10hz_mode;
+extern BLE_Driver ble;
 
 class GPS_Driver
 {
@@ -25,25 +28,53 @@ public:
 
     void begin()
     {
-        // 保持 115200，因为你的 GPS 模块可能已经配置过，或者默认就是这个
-        serial->begin(115200, SERIAL_8N1, rxPin, txPin);
-        _bootTime = millis();
-        _isConfigured = false;
-        // if (sys_cfg.gps_10hz_mode)
-        // {
-        //     sleep(20);
-        //     setUblox10Hz();
-        // }
+                // 1. 实例化自动检测器
+                GPSAutoBaud autobaud(serial, rxPin, txPin);
+
+                // // 2. 执行检测
+                uint32_t detectedBaud = autobaud.detect();
+                 Serial.printf("Detected GPS baud rate: %lu\n", detectedBaud);
+                 delay(100);
+                 // 保持 115200，因为你的 GPS 模块可能已经配置过，或者默认就是这个
+                 serial->begin(detectedBaud, SERIAL_8N1, rxPin, txPin);
+                 _bootTime = millis();
+                 _isConfigured = false;
+        // serial->begin(9600, SERIAL_8N1, rxPin, txPin);
+        // delay(100);
+        // // 配置波特率 115200 的 UBX 指令
+        // uint8_t setBaud[] = {
+        //     0x06, 0x00, 0x14, 0x00, 0x01, 0x00, 0x00, 0x00,
+        //     0xD0, 0x08, 0x00, 0x00, 0x00, 0xC2, 0x01, 0x00,
+        //     0x07, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00};
+        // sendUBX(setBaud, sizeof(setBaud));
+        // delay(200);
+        // serial->end(); // 关闭 9600
+
+        // // 2. 以 115200 重连
+        // serial->begin(115200, SERIAL_8N1, rxPin, txPin);
+        // delay(100);
+
+        // // 3. 设置刷新率为 8Hz (125ms)
+        // // 0x007D = 125ms
+        // uint8_t setRate[] = {
+        //     0x06, 0x08, 0x06, 0x00, 0xC8, 0x00, 0x01, 0x00, 0x01, 0x00};
+        // sendUBX(setRate, sizeof(setRate));
+
+        // Serial.println(">>> 配置指令已发送，准备监测刷新率...");
     }
 
     void update()
     {
         while (serial->available())
         {
+            // 1. 读取原始字节
             char c = serial->read();
+            // Serial.write(c);
+
+            // 2. [原有逻辑] 喂给 TinyGPS++ 解析 (给屏幕UI和算法用)
             tgps.encode(c);
 
-            // 日志缓冲逻辑
+            // 3. [原有逻辑] 日志缓冲
             if (gps_log_buffer.length() < MAX_LOG_SIZE)
             {
                 gps_log_buffer += c;
@@ -54,11 +85,15 @@ public:
                 gps_log_buffer += c;
             }
         }
+
+        // 配置逻辑保持不变
         if (sys_cfg.gps_10hz_mode && !_isConfigured && (millis() - _bootTime > 3000))
         {
-            setUblox10Hz(); // 发送指令
-            setUbloxGPSBeiDou();
-            _isConfigured = true;   // 标记已完成，以后不再发
+            setUblox10Hz();
+            // setUbloxRate8Hz();
+            // setUbloxBaud115200();
+            delay(100);
+            _isConfigured = true;
         }
     }
 
@@ -89,6 +124,75 @@ public:
         serial->write(packet, sizeof(packet));
 
         // 建议等待一小会儿让模块处理
+        delay(100);
+    }
+    void sendUBX(const uint8_t *payload, uint8_t len)
+    {
+        uint8_t CK_A = 0, CK_B = 0;
+        serial->write(0xB5);
+        serial->write(0x62);
+        for (int i = 0; i < len; i++)
+        {
+            CK_A = CK_A + payload[i];
+            CK_B = CK_B + CK_A;
+            serial->write(payload[i]);
+        }
+        serial->write(CK_A);
+        serial->write(CK_B);
+        serial->println();
+    }
+    // 将 U-blox 7代 GPS 波特率修改为 115200
+    void setUbloxBaud115200()
+    {
+        // UBX-CFG-PRT 指令 (Port Configuration)
+        // 针对 UART1 (PortID=1) 设置为 115200, 8N1
+        uint8_t packet[] = {
+            0xB5, 0x62, // 头部 (Header)
+            0x06, 0x00, // Class ID (UBX-CFG-PRT)
+            0x14, 0x00, // 长度 (20 Bytes)
+
+            // Payload (有效载荷)
+            0x01,                   // Port ID: 1 (UART1)
+            0x00,                   // Reserved
+            0x00, 0x00,             // TX Ready
+            0xD0, 0x08, 0x00, 0x00, // Mode: 8N1 (0x000008D0)
+            0x00, 0xC2, 0x01, 0x00, // BaudRate: 115200 (0x0001C200) Little Endian
+            0x07, 0x00,             // In Proto Mask: UBX+NMEA+RTCM
+            0x03, 0x00,             // Out Proto Mask: UBX+NMEA
+            0x00, 0x00,             // Flags
+            0x00, 0x00,             // Reserved
+
+            // 校验和 (针对上述特定 Payload 计算得出)
+            0x5C, 0x06 // CK_A, CK_B
+        };
+
+        // 发送指令
+        serial->write(packet, sizeof(packet));
+
+        // ⚠️ 关键步骤：发送完这个指令后，GPS 会切换波特率
+        // 您的 ESP32 也必须紧接着切换到 115200 才能继续通信
+        delay(200); // 等待 GPS 处理
+    }
+    // 将 U-blox 7代 GPS 刷新率修改为 8Hz (125ms)
+    void setUbloxRate8Hz()
+    {
+        // UBX-CFG-RATE 指令
+        // 1000ms / 8 = 125ms = 0x007D
+        uint8_t packet[] = {
+            0xB5, 0x62, // 头部
+            0x06, 0x08, // Class ID (UBX-CFG-RATE)
+            0x06, 0x00, // 长度 (6 Bytes)
+
+            // Payload
+            0x7D, 0x00, // measRate: 125ms (0x007D) -> 8Hz
+            0x01, 0x00, // navRate: 1 (每个测量周期都输出导航解)
+            0x01, 0x00, // timeRef: 1 (GPS Time)
+
+            // 校验和 (针对 8Hz 计算得出)
+            0x93, 0xC8 // CK_A, CK_B
+        };
+
+        serial->write(packet, sizeof(packet));
         delay(100);
     }
     void setUbloxGPSBeiDou()

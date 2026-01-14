@@ -7,6 +7,16 @@
 #include "GPS_Driver.hpp"
 #include "Track_Manager.hpp"
 
+
+LV_FONT_DECLARE(font_race);    // 14px (小号，用于标题、状态、详情)
+LV_FONT_DECLARE(font_race_30); // 30px (大号，用于按钮核心文字)
+
+
+static lv_style_t style_text_30; // 30号 大字样式
+static lv_style_t style_text_14; // 14号 小字样式
+static bool styles_initialized = false;
+
+
 extern GPS_Driver gps;
 extern TrackManager trackMgr;
 extern lv_obj_t *ui_ScreenMain;
@@ -33,6 +43,24 @@ extern void screen_gesture_event_cb(lv_event_t *e);
 void build_track_wait_page();
 void build_mode_page();
 
+// 辅助函数：统一初始化样式
+// 只需要在每个 build 函数的开头调用一次即可
+// 辅助函数：统一初始化样式
+static void ensure_styles_init()
+{
+    if (styles_initialized)
+        return;
+
+    lv_style_init(&style_text_30);
+    lv_style_set_text_font(&style_text_30, &font_race_30);
+    lv_style_set_text_color(&style_text_30, lv_color_white());
+
+    lv_style_init(&style_text_14);
+    lv_style_set_text_font(&style_text_14, &font_race);
+    lv_style_set_text_color(&style_text_14, lv_color_white());
+
+    styles_initialized = true;
+}
 // 辅助函数: 计算两点距离
 float calc_dist_ui(double lat1, double lon1, double lat2, double lon2)
 {
@@ -183,6 +211,13 @@ void btn_wait_exit_event_cb(lv_event_t *e)
 // 定时器逻辑
 // ==========================================
 
+// 确保已声明字体
+LV_FONT_DECLARE(font_race);
+
+// 如果你在文件顶部已经定义了 style_text_14，这里就不需要重复定义
+// 如果没有，你需要确保在使用前应用样式的代码是有效的
+// 建议：直接复用 build_mode_page 里定义好的 style_text_14
+
 void mode_timer_cb(lv_timer_t *timer)
 {
     if (!ui_ScreenMode || !lv_obj_is_valid(ui_ScreenMode))
@@ -193,72 +228,80 @@ void mode_timer_cb(lv_timer_t *timer)
     bool is_track_active = trackMgr.isArmed();                                        // 赛道模式是否激活
     bool is_roam_running = (sys_cfg.is_running && sys_cfg.current_mode == MODE_ROAM); // 漫游是否在跑
 
-    // --- 1. 更新 ROAM 按钮状态 ---
-    // 如果赛道模式激活了，禁用漫游按钮
+    // --- 1. 更新 街道漫游 (ROAM) 按钮状态 ---
     if (is_track_active)
     {
+        // [禁用] 因为正在跑赛道
         lv_obj_set_style_bg_color(ui_BtnRoam, lv_color_hex(0x333333), LV_PART_MAIN); // 变灰
-        lv_label_set_text(ui_LabelRoamStatus, "DISABLED");
-        lv_obj_clear_flag(ui_BtnRoam, LV_OBJ_FLAG_CLICKABLE);   // 禁止点击
-        lv_obj_set_style_bg_opa(ui_BtnRoam, 100, LV_PART_MAIN); // 变暗
+        lv_label_set_text(ui_LabelRoamStatus, "已禁用");                             // DISABLED
+        lv_obj_clear_flag(ui_BtnRoam, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_opa(ui_BtnRoam, 100, LV_PART_MAIN);
     }
     else if (is_roam_running)
     {
-        lv_obj_set_style_bg_color(ui_BtnRoam, lv_color_hex(0x00FF00), LV_PART_MAIN); // 绿色 (运行中)
-        lv_label_set_text(ui_LabelRoamStatus, "RUNNING");
+        // [运行中]
+        lv_obj_set_style_bg_color(ui_BtnRoam, lv_color_hex(0x00FF00), LV_PART_MAIN); // 绿色
+        lv_label_set_text(ui_LabelRoamStatus, "运行中");                             // RUNNING
         lv_obj_add_flag(ui_BtnRoam, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_bg_opa(ui_BtnRoam, 255, LV_PART_MAIN);
     }
     else if (gps.tgps.location.isValid())
     {
-        lv_obj_set_style_bg_color(ui_BtnRoam, lv_color_hex(0x00AEEF), LV_PART_MAIN); // 蓝色 (就绪)
-        lv_label_set_text(ui_LabelRoamStatus, "READY");
+        // [就绪] GPS 有定位
+        lv_obj_set_style_bg_color(ui_BtnRoam, lv_color_hex(0x00AEEF), LV_PART_MAIN); // 蓝色
+        lv_label_set_text(ui_LabelRoamStatus, "就绪");                               // READY
         lv_obj_add_flag(ui_BtnRoam, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_bg_opa(ui_BtnRoam, 255, LV_PART_MAIN);
     }
     else
     {
-        // GPS 未定位
+        // [等待GPS]
         lv_obj_set_style_bg_color(ui_BtnRoam, lv_color_hex(0x333333), LV_PART_MAIN);
-        lv_label_set_text_fmt(ui_LabelRoamStatus, "WAIT GPS (%d)", gps.getSatellites());
+        // 使用 fmt 格式化字符串
+        lv_label_set_text_fmt(ui_LabelRoamStatus, "等待卫星 (%d)", gps.getSatellites()); // WAIT GPS
         lv_obj_clear_flag(ui_BtnRoam, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_bg_opa(ui_BtnRoam, 150, LV_PART_MAIN);
     }
 
-    // --- 2. 更新 TRACK 按钮状态 ---
-    // 如果漫游在跑，禁用赛道按钮
+    // --- 2. 更新 赛道模式 (TRACK) 按钮状态 ---
     if (is_roam_running)
     {
+        // [禁用] 因为正在跑漫游
         lv_obj_set_style_bg_color(ui_BtnTrack, lv_color_hex(0x222222), LV_PART_MAIN);
-        lv_label_set_text(ui_LabelTrackStatus, "ROAMING BUSY");
+        lv_label_set_text(ui_LabelTrackStatus, "漫游占用"); // ROAMING BUSY -> 漫游占用
         lv_obj_clear_flag(ui_BtnTrack, LV_OBJ_FLAG_CLICKABLE);
     }
     else if (trackMgr.isTrackSetup())
     {
-        // [新增] 如果正在跑比赛 (Armed)，显示红色停止按钮
         if (is_track_active)
         {
+            // [正在比赛] -> 显示停止
             lv_obj_set_style_bg_color(ui_BtnTrack, lv_color_hex(0xFF0000), LV_PART_MAIN); // 红色
-            lv_label_set_text(ui_LabelTrackStatus, "STOP RACE");
-            lv_label_set_text(ui_LabelTrackInfo, "Running...");
+            lv_label_set_text(ui_LabelTrackStatus, "停止比赛");                           // STOP RACE
+            lv_label_set_text(ui_LabelTrackInfo, "比赛进行中");                           // Running...
         }
         else
         {
-            // 就绪状态
+            // [就绪] -> 显示开始
             lv_obj_set_style_bg_color(ui_BtnTrack, lv_color_hex(0x9C27B0), LV_PART_MAIN); // 紫色
-            lv_label_set_text(ui_LabelTrackStatus, "START RACE");
+            lv_label_set_text(ui_LabelTrackStatus, "开始比赛");                           // START RACE
+
+            // 显示赛道类型
             int type = trackMgr.getCurrentTrackType();
-            lv_label_set_text(ui_LabelTrackInfo, (type == 0) ? "CIRCUIT" : "SPRINT");
+            if (type == 0)
+                lv_label_set_text(ui_LabelTrackInfo, "圈速"); // CIRCUIT
+            else
+                lv_label_set_text(ui_LabelTrackInfo, "冲刺"); // SPRINT
         }
         lv_obj_add_flag(ui_BtnTrack, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_bg_opa(ui_BtnTrack, 255, LV_PART_MAIN);
     }
     else
     {
-        // 无赛道数据
+        // [无数据] -> 提示配置
         lv_obj_set_style_bg_color(ui_BtnTrack, lv_color_hex(0x222222), LV_PART_MAIN);
-        lv_label_set_text(ui_LabelTrackStatus, "SETUP VIA APP");
-        lv_label_set_text(ui_LabelTrackInfo, "NO DATA");
+        lv_label_set_text(ui_LabelTrackStatus, "请用APP配置"); // SETUP VIA APP
+        lv_label_set_text(ui_LabelTrackInfo, "无数据");        // NO DATA
         lv_obj_clear_flag(ui_BtnTrack, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_bg_opa(ui_BtnTrack, 150, LV_PART_MAIN);
     }
@@ -320,6 +363,7 @@ void track_wait_timer_cb(lv_timer_t *timer)
 
 void build_track_wait_page()
 {
+    // 1. 单例检查：如果页面已经存在，只确保定时器开启，然后返回
     if (ui_ScreenTrackWait && lv_obj_is_valid(ui_ScreenTrackWait))
     {
         if (!timer_track_wait)
@@ -327,126 +371,144 @@ void build_track_wait_page()
         return;
     }
 
+    // 2. 确保字体样式已初始化
+    ensure_styles_init();
+
+    // 3. 创建屏幕容器
     ui_ScreenTrackWait = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(ui_ScreenTrackWait, lv_color_hex(0x000000), LV_PART_MAIN);
 
-    // 1. 标题 (Y=15)
+    // ------------------------------------------------------------------------
+    // UI 组件构建
+    // ------------------------------------------------------------------------
+
+    // [标题] 使用 36号 大字
     ui_LabelWaitTitle = lv_label_create(ui_ScreenTrackWait);
-    lv_label_set_text(ui_LabelWaitTitle, "WAITING FOR START");
-    lv_obj_set_style_text_font(ui_LabelWaitTitle, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_add_style(ui_LabelWaitTitle, &style_text_30, 0);
+    lv_label_set_text(ui_LabelWaitTitle, "等待起跑");
+    // 局部覆盖颜色：使用醒目的橙色
     lv_obj_set_style_text_color(ui_LabelWaitTitle, lv_color_hex(0xFFA500), LV_PART_MAIN);
     lv_obj_align(ui_LabelWaitTitle, LV_ALIGN_TOP_MID, 0, 15);
 
-    // 2. 坐标 (Y=45)
+    // [起点坐标] 使用 20号 小字
+    // 逻辑：从 trackMgr 获取起点坐标并格式化显示
     ui_LabelWaitCoords = lv_label_create(ui_ScreenTrackWait);
-    double sLat, sLon;
+
+    double sLat = 0.0, sLon = 0.0;
+    // 假设 trackMgr 是全局对象
     trackMgr.getStartPoint(sLat, sLon);
+
     char coord_buf[64];
-    if (abs(sLat) > 0.1)
+    // 简单的有效性检查 (绝对值 > 0.1 视为有效坐标)
+    if (fabs(sLat) > 0.1)
     {
-        snprintf(coord_buf, sizeof(coord_buf), "START: %.5f, %.5f", sLat, sLon);
+        snprintf(coord_buf, sizeof(coord_buf), "起点: %.5f, %.5f", sLat, sLon);
     }
     else
     {
-        snprintf(coord_buf, sizeof(coord_buf), "START: --.----, --.----");
+        snprintf(coord_buf, sizeof(coord_buf), "起点: --.----, --.----");
     }
+
+    lv_obj_add_style(ui_LabelWaitCoords, &style_text_14, 0);
     lv_label_set_text(ui_LabelWaitCoords, coord_buf);
-    lv_obj_set_style_text_font(ui_LabelWaitCoords, &lv_font_montserrat_14, LV_PART_MAIN);
+    // 局部覆盖颜色：使用灰色
     lv_obj_set_style_text_color(ui_LabelWaitCoords, lv_color_hex(0xAAAAAA), LV_PART_MAIN);
-    lv_obj_align(ui_LabelWaitCoords, LV_ALIGN_TOP_MID, 0, 45);
+    // Y位置下移到 65，避开上方的大标题
+    lv_obj_align(ui_LabelWaitCoords, LV_ALIGN_TOP_MID, 0, 65);
 
-    // 3. 距离 (上移到 -45，给中间腾位置)
+    // [距离数值] 使用 36号 大字 (核心数据)
     ui_LabelWaitDist = lv_label_create(ui_ScreenTrackWait);
-    lv_label_set_text(ui_LabelWaitDist, "DIST: --.- m");
-    lv_obj_set_style_text_font(ui_LabelWaitDist, &lv_font_montserrat_28, LV_PART_MAIN);
-    lv_obj_align(ui_LabelWaitDist, LV_ALIGN_CENTER, 0, -45);
+    lv_obj_add_style(ui_LabelWaitDist, &style_text_30, 0);
+    // 初始显示占位符，由 timer 回调函数更新实际数值
+    lv_label_set_text(ui_LabelWaitDist, "距离: --.- m");
+    // 放在屏幕中心稍微偏上一点
+    lv_obj_align(ui_LabelWaitDist, LV_ALIGN_CENTER, 0, -5);
 
-    // 4. 提示 (正中间偏下，Y=10)
+    // [操作提示] 使用 20号 小字
     lv_obj_t *hint = lv_label_create(ui_ScreenTrackWait);
-    lv_label_set_text(hint, "Drive through start line\nto automatically begin.");
+    lv_obj_add_style(hint, &style_text_14, 0);
+    lv_label_set_text(hint, "请穿过起跑线\n自动开始计时");
     lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(hint, lv_color_hex(0x666666), LV_PART_MAIN);
-    lv_obj_align(hint, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_set_style_text_color(hint, lv_color_hex(0x666666), LV_PART_MAIN); // 深灰色
+    // 放在屏幕中心偏下
+    lv_obj_align(hint, LV_ALIGN_CENTER, 0, 30);
 
-    // 5. 按钮 (贴底，Y=-15，改小一点)
+    // [取消按钮]
     ui_BtnWaitExit = lv_btn_create(ui_ScreenTrackWait);
-    lv_obj_set_size(ui_BtnWaitExit, 100, 36); // 变小
-    lv_obj_align(ui_BtnWaitExit, LV_ALIGN_BOTTOM_MID, 0, -15);
+    // 尺寸加大以适应手指操作 (140x50)
+    lv_obj_set_size(ui_BtnWaitExit, 140, 50);
+    lv_obj_align(ui_BtnWaitExit, LV_ALIGN_BOTTOM_MID, 0, -20);
     lv_obj_set_style_bg_color(ui_BtnWaitExit, lv_color_hex(0x333333), LV_PART_MAIN);
-    lv_obj_set_style_radius(ui_BtnWaitExit, 18, LV_PART_MAIN);
+    lv_obj_set_style_radius(ui_BtnWaitExit, 25, LV_PART_MAIN); // 大圆角
     lv_obj_add_event_cb(ui_BtnWaitExit, btn_wait_exit_event_cb, LV_EVENT_CLICKED, NULL);
 
+    // [按钮文字] 使用 36号 大字
     lv_obj_t *lbl_exit = lv_label_create(ui_BtnWaitExit);
-    lv_label_set_text(lbl_exit, "CANCEL");
-    lv_obj_set_style_text_font(lbl_exit, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_add_style(lbl_exit, &style_text_30, 0);
+    lv_label_set_text(lbl_exit, "取消");
     lv_obj_center(lbl_exit);
 
+    // 4. 启动刷新定时器
     timer_track_wait = lv_timer_create(track_wait_timer_cb, 100, NULL);
 }
-
 void build_mode_page()
 {
     if (ui_ScreenMode && lv_obj_is_valid(ui_ScreenMode))
         return;
 
+    ensure_styles_init();
+
     ui_ScreenMode = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(ui_ScreenMode, lv_color_hex(0x101010), LV_PART_MAIN);
     lv_obj_add_event_cb(ui_ScreenMode, screen_gesture_event_cb, LV_EVENT_GESTURE, NULL);
 
+    // [标题] Y=5 (贴近顶部)
     lv_obj_t *title = lv_label_create(ui_ScreenMode);
-    lv_label_set_text(title, "SELECT MODE");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, LV_PART_MAIN);
-    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_add_style(title, &style_text_14, 0);
+    lv_label_set_text(title, "选择模式");
+    lv_obj_set_style_text_color(title, lv_color_hex(0xAAAAAA), LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 5); // <--- 修改点 1
 
-    // 1. ROAMING
+    // [按钮 1] 街道漫游 Y=25 (紧贴标题)
     ui_BtnRoam = lv_btn_create(ui_ScreenMode);
     lv_obj_set_size(ui_BtnRoam, 280, 80);
-    lv_obj_align(ui_BtnRoam, LV_ALIGN_TOP_MID, 0, 50);
-    // [修改 1] 将 CLICKED 改为 LONG_PRESSED (防误触)
+    lv_obj_align(ui_BtnRoam, LV_ALIGN_TOP_MID, 0, 25); // <--- 修改点 2 (原40 -> 25)
     lv_obj_add_event_cb(ui_BtnRoam, btn_roam_event_cb, LV_EVENT_LONG_PRESSED, NULL);
-
-    // [修改 2] 让按钮也能识别滑动手势 (解决在按钮上没法滑回主页的问题)
     lv_obj_add_event_cb(ui_BtnRoam, screen_gesture_event_cb, LV_EVENT_GESTURE, NULL);
 
     lv_obj_t *lbl_roam = lv_label_create(ui_BtnRoam);
-    lv_label_set_text(lbl_roam, "ROAMING");
-    lv_obj_set_style_text_font(lbl_roam, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_add_style(lbl_roam, &style_text_30, 0);
+    lv_label_set_text(lbl_roam, "街道漫游");
     lv_obj_align(lbl_roam, LV_ALIGN_TOP_LEFT, 10, 10);
 
     ui_LabelRoamStatus = lv_label_create(ui_BtnRoam);
-    lv_label_set_text(ui_LabelRoamStatus, "CHECKING GPS...");
-    lv_obj_set_style_text_font(ui_LabelRoamStatus, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(ui_LabelRoamStatus, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
+    lv_obj_add_style(ui_LabelRoamStatus, &style_text_14, 0);
+    lv_label_set_text(ui_LabelRoamStatus, "正在定位...");
+    lv_obj_align(ui_LabelRoamStatus, LV_ALIGN_BOTTOM_RIGHT, -5, -5);
 
-    // 2. TRACK MODE
+    // [按钮 2] 赛道模式 Y=115 (25起始 + 80高度 + 10间距 = 115)
     ui_BtnTrack = lv_btn_create(ui_ScreenMode);
     lv_obj_set_size(ui_BtnTrack, 280, 80);
-    lv_obj_align(ui_BtnTrack, LV_ALIGN_TOP_MID, 0, 145);
+    lv_obj_align(ui_BtnTrack, LV_ALIGN_TOP_MID, 0, 115); // <--- 修改点 3 (原140 -> 115)
     lv_obj_set_style_bg_color(ui_BtnTrack, lv_color_hex(0x222222), LV_PART_MAIN);
-    // [修改 1] 改为长按
     lv_obj_add_event_cb(ui_BtnTrack, btn_track_event_cb, LV_EVENT_LONG_PRESSED, NULL);
-
-    // [修改 2] 添加手势支持
     lv_obj_add_event_cb(ui_BtnTrack, screen_gesture_event_cb, LV_EVENT_GESTURE, NULL);
 
     lv_obj_t *lbl_track = lv_label_create(ui_BtnTrack);
-    lv_label_set_text(lbl_track, "TRACK MODE");
-    lv_obj_set_style_text_font(lbl_track, &lv_font_montserrat_20, LV_PART_MAIN);
-    lv_obj_set_style_text_color(lbl_track, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_add_style(lbl_track, &style_text_30, 0);
+    lv_label_set_text(lbl_track, "赛道模式");
     lv_obj_align(lbl_track, LV_ALIGN_TOP_LEFT, 10, 10);
 
     ui_LabelTrackStatus = lv_label_create(ui_BtnTrack);
-    lv_label_set_text(ui_LabelTrackStatus, "LOADING...");
-    lv_obj_set_style_text_font(ui_LabelTrackStatus, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(ui_LabelTrackStatus, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
+    lv_obj_add_style(ui_LabelTrackStatus, &style_text_14, 0);
+    lv_label_set_text(ui_LabelTrackStatus, "加载中...");
+    lv_obj_align(ui_LabelTrackStatus, LV_ALIGN_BOTTOM_RIGHT, -5, -5);
 
     ui_LabelTrackInfo = lv_label_create(ui_BtnTrack);
     lv_label_set_text(ui_LabelTrackInfo, "-");
-    lv_obj_set_style_text_font(ui_LabelTrackInfo, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(ui_LabelTrackInfo, lv_color_hex(0xAAAAAA), LV_PART_MAIN);
-    lv_obj_align(ui_LabelTrackInfo, LV_ALIGN_BOTTOM_LEFT, 10, -10);
+    lv_obj_add_style(ui_LabelTrackInfo, &style_text_14, 0);
+    lv_obj_set_style_text_color(ui_LabelTrackInfo, lv_color_hex(0x888888), LV_PART_MAIN);
+    lv_obj_align(ui_LabelTrackInfo, LV_ALIGN_BOTTOM_LEFT, 10, -5);
 
     lv_timer_create(mode_timer_cb, 500, NULL);
 }

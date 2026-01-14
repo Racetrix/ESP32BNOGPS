@@ -246,6 +246,10 @@ public:
     // --- [新增] 发送心跳/遥测包 (高频) ---
     void sendTelemetry()
     {
+        // if (ble.getMode() != BLE_MODE_TELEMETRY)
+        // {
+        //     return;
+        // }
         // [安全检查] 如果蓝牙未连接 或 正在发送长数据(Sync/Report)，则不发送心跳
         if (!ble.isConnected() || ble.isTxBusy)
             return;
