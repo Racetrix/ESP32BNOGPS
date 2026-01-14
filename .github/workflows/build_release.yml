@@ -33,22 +33,35 @@ jobs:
       - name: Locate and Prepare Files
         id: files
         run: |
-          # 1. 找到编译生成的 build 目录 (假设只有一个环境，自动找最新的)
-          BUILD_DIR=$(find .pio/build -maxdepth 1 -type d -name "*" ! -name "." | head -n 1)
-          echo "Build Directory found: $BUILD_DIR"
+          # 1. 寻找编译目录 (使用 -mindepth 1 确保找到的是子文件夹，而不是 build 本身)
+          # 这样会找到像 .pio/build/4d_systems_esp32s3_gen4_r8n16 这样的路径
+          BUILD_DIR=$(find .pio/build -mindepth 1 -maxdepth 1 -type d | head -n 1)
+          
+          if [ -z "$BUILD_DIR" ]; then
+            echo "❌ Error: Could not find build directory in .pio/build/"
+            ls -R .pio/build
+            exit 1
+          fi
+          
+          echo "✅ Build Directory found: $BUILD_DIR"
           
           # 2. 找到 boot_app0.bin (它藏在 PIO 的包里)
-          # 在 GitHub Action 的 Linux 环境下，PIO 包通常在 ~/.platformio/packages
           BOOT_APP0=$(find ~/.platformio/packages/framework-arduinoespressif32 -name boot_app0.bin | head -n 1)
-          echo "Boot_app0 found at: $BOOT_APP0"
+          
+          if [ -z "$BOOT_APP0" ]; then
+             echo "❌ Error: Could not find boot_app0.bin"
+             exit 1
+          fi
+          echo "✅ Boot_app0 found at: $BOOT_APP0"
 
-          # 3. 复制所有文件到当前目录方便操作
+          # 3. 复制所有文件到当前目录
           cp "$BUILD_DIR/bootloader.bin" .
           cp "$BUILD_DIR/partitions.bin" .
           cp "$BUILD_DIR/firmware.bin" .
           cp "$BOOT_APP0" .
           
-          # 检查文件是否存在
+          # 4. 列出文件确认
+          echo "📂 Files ready for merge:"
           ls -lh *.bin
 
       - name: Merge Firmware (The Golden Command)
